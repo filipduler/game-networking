@@ -208,6 +208,10 @@ impl Process {
             payload[HEADER_SIZE..].copy_from_slice(&data);
 
             self.outgoing_packets.push_back((addr, payload));
+            connection
+                .reliable_channel
+                .send_buffer
+                .insert_send_buffer(data);
         }
     }
 

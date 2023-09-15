@@ -2,7 +2,7 @@ use std::{net::SocketAddr, time::Instant};
 
 use rand::Rng;
 
-use super::channel::Channel;
+use super::{channel::Channel, send_buffer::SendBufferManager};
 
 pub struct Connection {
     pub identity: Identity,
@@ -27,6 +27,7 @@ impl Connection {
                 local_seq: 0,
                 remote_seq: 0,
                 ack_bits: 0,
+                send_buffer: SendBufferManager::new(),
             },
             received_at: Instant::now(),
             last_received: Instant::now(),
