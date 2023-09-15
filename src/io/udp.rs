@@ -135,8 +135,10 @@ pub fn run(
                         match socket.recv_from(&mut buf) {
                             Ok((packet_size, source_address)) => {
                                 if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
-                                    outgoing_packets
-                                        .push_front((source_address, buf[..packet_size].to_vec()));
+                                    outgoing_packets.push_front((
+                                        source_address,
+                                        buf[4..packet_size - 4].to_vec(),
+                                    ));
                                 }
                             }
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
