@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{rc::Rc, time::Instant};
 
 use super::{sequence_buffer::SequenceBuffer, BUFFER_SIZE};
 
@@ -9,34 +9,25 @@ pub struct SendBuffer {
 }
 
 pub struct SendBufferManager {
-    pub seq: u32,
-    pub buffers: SequenceBuffer<SendBuffer>,
+    pub buffers: SequenceBuffer<Rc<SendBuffer>>,
 }
 
 impl SendBufferManager {
     pub fn new() -> Self {
-        let mut buffers: SequenceBuffer<SendBuffer> = SequenceBuffer {
-            values: Vec::new(),
-            partition_by: BUFFER_SIZE,
-        };
-        for _ in 0..BUFFER_SIZE {
-            buffers.values.push(None);
+        SendBufferManager {
+            buffers: SequenceBuffer::with_capacity(BUFFER_SIZE),
         }
-
-        SendBufferManager { seq: 0, buffers }
     }
 
-    pub fn insert_send_buffer(&mut self, data: Vec<u8>) {
-        self.seq += 1;
+    pub fn push_send_buffer(&mut self, seq: u32, data: &[u8]) -> Rc<SendBuffer> {
+        let send_buffer = Rc::new(SendBuffer {
+            data: data.to_vec(),
+            seq,
+            created_at: Instant::now(),
+        });
 
-        self.buffers.insert(
-            self.seq,
-            SendBuffer {
-                data,
-                seq: self.seq,
-                created_at: Instant::now(),
-            },
-        );
+        self.buffers.insert(seq, send_buffer.clone());
+        send_buffer
     }
 
     /*pub fn get_send_buffer(&mut self, sequence: u16) -> Option<&mut SendBuffer> {

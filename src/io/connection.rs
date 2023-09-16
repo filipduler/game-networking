@@ -1,8 +1,15 @@
-use std::{net::SocketAddr, time::Instant};
+use std::{
+    net::SocketAddr,
+    sync::atomic::{AtomicU32, Ordering},
+    time::Instant,
+};
 
 use rand::Rng;
 
-use super::{channel::Channel, send_buffer::SendBufferManager};
+use super::{
+    channel::Channel, send_buffer::SendBufferManager, sequence_buffer::SequenceBuffer, BUFFER_SIZE,
+};
+const CONNECTION_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 pub struct Connection {
     pub identity: Identity,
@@ -17,6 +24,7 @@ impl Connection {
 
         Self {
             identity: Identity {
+                id: CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst),
                 addr,
                 client_salt,
                 server_salt,
@@ -26,8 +34,8 @@ impl Connection {
             reliable_channel: Channel {
                 local_seq: 0,
                 remote_seq: 0,
-                ack_bits: 0,
                 send_buffer: SendBufferManager::new(),
+                recieved: SequenceBuffer::with_capacity(BUFFER_SIZE),
             },
             received_at: Instant::now(),
             last_received: Instant::now(),
@@ -36,6 +44,7 @@ impl Connection {
 }
 
 pub struct Identity {
+    pub id: u32,
     pub addr: SocketAddr,
     pub client_salt: u64,
     pub server_salt: u64,

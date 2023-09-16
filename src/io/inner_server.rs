@@ -1,7 +1,11 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{
+        hash_map::{OccupiedEntry, VacantEntry},
+        HashMap, VecDeque,
+    },
     io,
     net::SocketAddr,
+    rc::Rc,
     sync::Arc,
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -15,6 +19,7 @@ use mio::{net::UdpSocket, Events, Interest, Poll, Token};
 use super::{
     connection::Connection,
     header::{Header, HEADER_SIZE},
+    send_buffer::SendBuffer,
 };
 
 // A token to allow us to identify which event is for the `UdpSocket`.
@@ -22,7 +27,7 @@ const UDP_SOCKET: Token = Token(0);
 pub enum Event {
     Connect,
     Disconnect,
-    Receive,
+    Receive(u32, Vec<u8>),
 }
 
 #[repr(u8)]
@@ -44,17 +49,17 @@ pub enum SendType {
 pub struct Process {
     addr: SocketAddr,
     socket: UdpSocket,
-    out_events: Sender<(SocketAddr, Vec<u8>)>,
+    out_events: Sender<Event>,
     in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
     connections: HashMap<SocketAddr, Connection>,
-    outgoing_packets: VecDeque<(SocketAddr, Vec<u8>)>,
+    send_queue: VecDeque<(SocketAddr, Rc<SendBuffer>)>,
 }
 
 impl Process {
     pub fn bind(
         addr: SocketAddr,
         max_clients: usize,
-        out_events: Sender<(SocketAddr, Vec<u8>)>,
+        out_events: Sender<Event>,
         in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
     ) -> std::io::Result<Self> {
         let socket = UdpSocket::bind(addr)?;
@@ -64,7 +69,7 @@ impl Process {
             in_sends,
             out_events,
             connections: HashMap::with_capacity(max_clients),
-            outgoing_packets: VecDeque::new(),
+            send_queue: VecDeque::new(),
         })
     }
 
@@ -81,39 +86,15 @@ impl Process {
         // packet, which is the maximum value of 16 a bit integer.
         let mut buf = [0; 1 << 16];
 
-        let mut unsent_packet = None;
-
         // Our event loop.
         loop {
-            //check if there are and send requests
-            if !self.in_sends.is_empty() {
+            //check if there are and send requests in the queue
+            if !self.send_queue.is_empty() {
                 poll.registry().reregister(
                     &mut self.socket,
                     UDP_SOCKET,
                     Interest::READABLE | Interest::WRITABLE,
                 )?;
-            }
-
-            //process all outgoing requests
-            if !self.outgoing_packets.is_empty() {
-                loop {
-                    if self.out_events.is_full() {
-                        break;
-                    }
-
-                    if let Some(packet) = self.outgoing_packets.pop_back() {
-                        match self.out_events.try_send(packet) {
-                            Err(TrySendError::Full(packet)) => {
-                                //this shouldn't happen becase we're checking if the channel is full
-                                //requeue the packet and wait
-                                self.outgoing_packets.push_back(packet);
-                                break;
-                            }
-                            Err(TrySendError::Disconnected(_)) => panic!("sender disconnected!"),
-                            _ => {}
-                        }
-                    }
-                }
             }
 
             // Poll to check if we have events waiting for us.
@@ -128,55 +109,35 @@ impl Process {
             for event in events.iter() {
                 match event.token() {
                     UDP_SOCKET => loop {
-                        if event.is_writable() {
-                            println!("writable!");
-                            let mut send_finished = true;
-
-                            loop {
-                                let data = if unsent_packet.is_some() {
-                                    unsent_packet.clone().unwrap()
-                                } else {
-                                    match self.in_sends.try_recv() {
-                                        Ok(data) => data,
-                                        Err(TryRecvError::Empty) => break,
-                                        Err(TryRecvError::Disconnected) => {
-                                            panic!("sender disconnected!")
-                                        }
-                                    }
-                                };
-
-                                match self.socket.send_to(&data.1, data.0) {
+                        if event.is_writable() && !self.send_queue.is_empty() {
+                            while let Some((addr, send_buffer)) = self.send_queue.front() {
+                                match self.socket.send_to(&send_buffer.data, *addr) {
+                                    Ok(_) => self.send_queue.pop_front(),
                                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                        //send would block so we store the last packet and try again
-                                        unsent_packet = Some(data);
-                                        send_finished = false;
                                         break;
                                     }
                                     Err(e) => {
                                         return Err(e);
                                     }
-                                    _ => {}
                                 };
                             }
 
-                            //if we sent all of the packets in the channel we can switch back to readable events
-                            if send_finished {
-                                poll.registry().reregister(
-                                    &mut self.socket,
-                                    UDP_SOCKET,
-                                    Interest::READABLE,
-                                )?;
-                            }
-                        } else if event.is_readable() {
+                            poll.registry().reregister(
+                                &mut self.socket,
+                                UDP_SOCKET,
+                                Interest::READABLE,
+                            )?;
+                        }
+
+                        if event.is_readable() {
                             // In this loop we receive all packets queued for the socket.
                             match self.socket.recv_from(&mut buf) {
                                 Ok((packet_size, source_address)) => {
                                     if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
-                                        //TODO: Fix!
-                                        /*self.out_events.push_front((
+                                        self.process_read_request(
                                             source_address,
-                                            buf[4..packet_size - 4].to_vec(),
-                                        ));*/
+                                            &buf[4..packet_size],
+                                        );
                                     }
                                 }
                                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -196,22 +157,36 @@ impl Process {
         }
     }
 
+    fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) {
+        let connection = self
+            .connections
+            .entry(addr)
+            .or_insert(Connection::new(addr, 0 /*TODO: fix */));
+
+        let header = Header::read(data);
+        //TODO: check if its duplicate
+
+        //mark the packet as recieved
+
+        //mark messages as sent
+        connection
+            .reliable_channel
+            .mark_received(header.seq, header.ack, header.ack_bits);
+
+        //TODO: make this sane
+        //send ack
+        let send_buffer = connection.reliable_channel.send(None);
+        self.send_queue.push_back((addr, send_buffer));
+
+        self.out_events
+            .send(Event::Receive(connection.identity.id, data.to_vec()))
+            .unwrap();
+    }
+
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connections.get_mut(&addr) {
-            let mut payload = vec![0_u8; data.len() + HEADER_SIZE];
-            let header = Header {
-                seq: connection.reliable_channel.local_seq,
-                ack: connection.reliable_channel.remote_seq,
-                ack_bits: connection.reliable_channel.ack_bits,
-            };
-            header.write(&mut payload);
-            payload[HEADER_SIZE..].copy_from_slice(&data);
-
-            self.outgoing_packets.push_back((addr, payload));
-            connection
-                .reliable_channel
-                .send_buffer
-                .insert_send_buffer(data);
+            let send_buffer = connection.reliable_channel.send(Some(&data));
+            self.send_queue.push_back((addr, send_buffer));
         }
     }
 

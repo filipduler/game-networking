@@ -4,6 +4,18 @@ pub struct SequenceBuffer<T> {
 }
 
 impl<T> SequenceBuffer<T> {
+    pub fn with_capacity(size: u32) -> Self {
+        let mut values = Vec::with_capacity(size as usize);
+        for _ in 0..size {
+            values.push(None);
+        }
+
+        SequenceBuffer {
+            values,
+            partition_by: size,
+        }
+    }
+
     pub fn sequence_to_index(&self, sequence: u32) -> usize {
         return (sequence % self.partition_by) as usize;
     }
