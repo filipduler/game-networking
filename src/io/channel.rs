@@ -52,16 +52,19 @@ impl Channel {
             self.remote_seq = remote_seq;
         }
 
-        self.send_buffer.buffers.remove(ack);
-        self.recieved.insert(ack, true);
+        self.ack_packet(ack);
 
         for bit_pos in 0..32 {
             if ack_bitfield.get_bit(bit_pos) {
                 let seq = ack - bit_pos as u32 - 1;
-                self.send_buffer.buffers.remove(seq);
-                self.recieved.insert(seq, true);
+                self.ack_packet(seq);
             }
         }
+    }
+
+    fn ack_packet(&mut self, ack: u32) {
+        self.send_buffer.buffers.remove(ack);
+        self.recieved.insert(ack, true);
     }
 
     //least significant bit is the remote_seq - 1 value

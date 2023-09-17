@@ -12,14 +12,15 @@ use std::{
 };
 
 use crate::io::MAGIC_NUMBER_HEADER;
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
-use log::warn;
+use crossbeam_channel::{select, Receiver, Sender, TryRecvError, TrySendError};
+use log::{error, warn};
 use mio::{net::UdpSocket, Events, Interest, Poll, Token};
 
 use super::{
     connection::Connection,
     header::{Header, HEADER_SIZE},
     send_buffer::SendBuffer,
+    socket::{run_udp_socket, UdpEvent},
 };
 
 // A token to allow us to identify which event is for the `UdpSocket`.
@@ -48,11 +49,15 @@ pub enum SendType {
 
 pub struct Process {
     addr: SocketAddr,
-    socket: UdpSocket,
+    connections: HashMap<SocketAddr, Connection>,
+    //API channels
     out_events: Sender<Event>,
     in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
-    connections: HashMap<SocketAddr, Connection>,
-    send_queue: VecDeque<(SocketAddr, Rc<SendBuffer>)>,
+    //UDP channels
+    send_rx: Receiver<(SocketAddr, u32, Vec<u8>)>,
+    send_tx: Sender<(SocketAddr, u32, Vec<u8>)>,
+    recv_rx: Receiver<UdpEvent>,
+    recv_tx: Sender<UdpEvent>,
 }
 
 impl Process {
@@ -62,96 +67,63 @@ impl Process {
         out_events: Sender<Event>,
         in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
     ) -> std::io::Result<Self> {
-        let socket = UdpSocket::bind(addr)?;
+        let (send_tx, send_rx) = crossbeam_channel::unbounded();
+        let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
+
         Ok(Self {
             addr,
-            socket,
             in_sends,
             out_events,
             connections: HashMap::with_capacity(max_clients),
-            send_queue: VecDeque::new(),
+            send_tx,
+            send_rx,
+            recv_tx,
+            recv_rx,
         })
     }
 
     pub fn start(&mut self) -> io::Result<()> {
-        let mut poll = Poll::new()?;
-        // Create storage for events. Since we will only register a single socket, a
-        // capacity of 1 will do.
-        let mut events = Events::with_capacity(1);
+        let s_send_rx = self.send_rx.clone();
+        let s_recv_tx = self.recv_tx.clone();
+        let s_addr = self.addr;
+        thread::spawn(move || {
+            if let Err(e) = run_udp_socket(s_addr, s_send_rx, s_recv_tx) {
+                error!("error while running udp server: {}", e)
+            }
+        });
 
-        poll.registry()
-            .register(&mut self.socket, UDP_SOCKET, Interest::READABLE)?;
+        //to clean up stuff
+        let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
 
-        // Initialize a buffer for the UDP packet. We use the maximum size of a UDP
-        // packet, which is the maximum value of 16 a bit integer.
-        let mut buf = [0; 1 << 16];
-
-        // Our event loop.
         loop {
-            //check if there are and send requests in the queue
-            if !self.send_queue.is_empty() {
-                poll.registry().reregister(
-                    &mut self.socket,
-                    UDP_SOCKET,
-                    Interest::READABLE | Interest::WRITABLE,
-                )?;
-            }
-
-            // Poll to check if we have events waiting for us.
-            if let Err(err) = poll.poll(&mut events, None) {
-                if err.kind() == io::ErrorKind::Interrupted {
-                    continue;
+            select! {
+                recv(interval_rx) -> msg_result => {
+                    //TODO: cleanup
                 }
-                return Err(err);
-            }
-
-            // Process each event.
-            for event in events.iter() {
-                match event.token() {
-                    UDP_SOCKET => loop {
-                        if event.is_writable() && !self.send_queue.is_empty() {
-                            while let Some((addr, send_buffer)) = self.send_queue.front() {
-                                match self.socket.send_to(&send_buffer.data, *addr) {
-                                    Ok(_) => self.send_queue.pop_front(),
-                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        return Err(e);
-                                    }
-                                };
-                            }
-
-                            poll.registry().reregister(
-                                &mut self.socket,
-                                UDP_SOCKET,
-                                Interest::READABLE,
-                            )?;
-                        }
-
-                        if event.is_readable() {
-                            // In this loop we receive all packets queued for the socket.
-                            match self.socket.recv_from(&mut buf) {
-                                Ok((packet_size, source_address)) => {
-                                    if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
-                                        self.process_read_request(
-                                            source_address,
-                                            &buf[4..packet_size],
-                                        );
-                                    }
-                                }
-                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                    break;
-                                }
-                                Err(e) => {
-                                    return Err(e);
-                                }
-                            }
-                        }
-                    },
-                    _ => {
-                        warn!("Got event for unexpected token: {:?}", event);
+                //incoming read packets
+                recv(self.recv_rx) -> msg_result => {
+                    match msg_result {
+                        Ok(UdpEvent::Read(addr, data)) => {
+                            self.process_read_request(
+                                addr,
+                                &data,
+                            );
+                        },
+                        Ok(UdpEvent::Sent(addr, seq, read_at)) => {
+                            //TODO:
+                        },
+                        Err(e) => panic!("panic reading udp event {}", e)
                     }
+
+                },
+                //send requests coming fron the API
+                recv(self.in_sends) -> msg_result => {
+                    let msg = msg_result.unwrap();
+                    self.process_send_request(
+                        msg.0,
+                        msg.1,
+                        msg.2
+                    );
                 }
             }
         }
@@ -176,7 +148,9 @@ impl Process {
         //TODO: make this sane
         //send ack
         let send_buffer = connection.reliable_channel.send(None);
-        self.send_queue.push_back((addr, send_buffer));
+        self.send_tx
+            .send((addr, send_buffer.seq, send_buffer.data.to_vec()))
+            .unwrap();
 
         self.out_events
             .send(Event::Receive(connection.identity.id, data.to_vec()))
@@ -186,7 +160,9 @@ impl Process {
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connections.get_mut(&addr) {
             let send_buffer = connection.reliable_channel.send(Some(&data));
-            self.send_queue.push_back((addr, send_buffer));
+            self.send_tx
+                .send((addr, send_buffer.seq, send_buffer.data.to_vec()))
+                .unwrap();
         }
     }
 
