@@ -31,12 +31,7 @@ impl Connection {
                 session_key: client_salt ^ server_salt,
                 accepted: false,
             },
-            reliable_channel: Channel {
-                local_seq: 0,
-                remote_seq: 0,
-                send_buffer: SendBufferManager::new(),
-                recieved: SequenceBuffer::with_capacity(BUFFER_SIZE),
-            },
+            reliable_channel: Channel::new(),
             received_at: Instant::now(),
             last_received: Instant::now(),
         }

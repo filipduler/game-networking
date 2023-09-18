@@ -97,8 +97,8 @@ impl Process {
 
         loop {
             select! {
-                recv(interval_rx) -> msg_result => {
-                    //TODO: cleanup
+                recv(interval_rx) -> _ => {
+                    self.update();
                 }
                 //incoming read packets
                 recv(self.recv_rx) -> msg_result => {
@@ -109,8 +109,10 @@ impl Process {
                                 &data,
                             );
                         },
-                        Ok(UdpEvent::Sent(addr, seq, read_at)) => {
-                            //TODO:
+                        Ok(UdpEvent::Sent(addr, seq, sent_at)) => {
+                            if let Some(conn) = self.connections.get_mut(&addr) {
+                                conn.reliable_channel.send_buffer.mark_sent(seq, sent_at);
+                            }
                         },
                         Err(e) => panic!("panic reading udp event {}", e)
                     }
@@ -138,19 +140,14 @@ impl Process {
         let header = Header::read(data);
         //TODO: check if its duplicate
 
-        //mark the packet as recieved
-
+        connection.reliable_channel.update_remote_seq(header.seq);
         //mark messages as sent
         connection
             .reliable_channel
-            .mark_received(header.seq, header.ack, header.ack_bits);
+            .mark_sent_packets(header.ack, header.ack_bits);
 
-        //TODO: make this sane
         //send ack
-        let send_buffer = connection.reliable_channel.send(None);
-        self.send_tx
-            .send((addr, send_buffer.seq, send_buffer.data.to_vec()))
-            .unwrap();
+        connection.reliable_channel.send_ack = true;
 
         self.out_events
             .send(Event::Receive(connection.identity.id, data.to_vec()))
@@ -159,10 +156,26 @@ impl Process {
 
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connections.get_mut(&addr) {
-            let send_buffer = connection.reliable_channel.send(Some(&data));
+            let send_buffer = connection.reliable_channel.create_send_buffer(Some(&data));
             self.send_tx
                 .send((addr, send_buffer.seq, send_buffer.data.to_vec()))
                 .unwrap();
+        }
+    }
+
+    fn update(&mut self) {
+        for connection in self.connections.values_mut() {
+            if connection.reliable_channel.send_ack {
+                let send_buffer = connection.reliable_channel.create_send_buffer(None);
+                self.send_tx
+                    .send((
+                        connection.identity.addr,
+                        send_buffer.seq,
+                        send_buffer.data.to_vec(),
+                    ))
+                    .unwrap();
+                connection.reliable_channel.send_ack = false;
+            }
         }
     }
 

@@ -3,13 +3,18 @@ use std::{rc::Rc, time::Instant};
 use super::{sequence_buffer::SequenceBuffer, BUFFER_SIZE};
 
 pub struct SendBuffer {
-    pub seq: u32,
-    pub data: Vec<u8>,
+    pub payload: Rc<SendPayload>,
+    pub sent_at: Option<Instant>,
     pub created_at: Instant,
 }
 
+pub struct SendPayload {
+    pub seq: u32,
+    pub data: Vec<u8>,
+}
+
 pub struct SendBufferManager {
-    pub buffers: SequenceBuffer<Rc<SendBuffer>>,
+    pub buffers: SequenceBuffer<SendBuffer>,
 }
 
 impl SendBufferManager {
@@ -19,15 +24,27 @@ impl SendBufferManager {
         }
     }
 
-    pub fn push_send_buffer(&mut self, seq: u32, data: &[u8]) -> Rc<SendBuffer> {
-        let send_buffer = Rc::new(SendBuffer {
-            data: data.to_vec(),
-            seq,
-            created_at: Instant::now(),
-        });
+    pub fn mark_sent(&mut self, seq: u32, sent_at: Instant) {
+        if let Some(buffer) = self.buffers.get_mut(seq) {
+            buffer.sent_at = Some(sent_at);
+        }
+    }
 
-        self.buffers.insert(seq, send_buffer.clone());
-        send_buffer
+    pub fn push_send_buffer(&mut self, seq: u32, data: &[u8]) -> Rc<SendPayload> {
+        let send_buffer = SendBuffer {
+            payload: Rc::new(SendPayload {
+                seq,
+                data: data.to_vec(),
+            }),
+            sent_at: None,
+            created_at: Instant::now(),
+        };
+
+        let payload = send_buffer.payload.clone();
+
+        self.buffers.insert(seq, send_buffer);
+
+        payload
     }
 
     /*pub fn get_send_buffer(&mut self, sequence: u16) -> Option<&mut SendBuffer> {
