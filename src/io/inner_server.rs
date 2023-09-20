@@ -1,25 +1,18 @@
 use std::{
-    collections::{
-        hash_map::{OccupiedEntry, VacantEntry},
-        HashMap, VecDeque,
-    },
+    collections::HashMap,
     io,
     net::SocketAddr,
-    rc::Rc,
-    sync::Arc,
-    thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    thread::{self},
+    time::Duration,
 };
 
-use crate::io::MAGIC_NUMBER_HEADER;
-use crossbeam_channel::{select, Receiver, Sender, TryRecvError, TrySendError};
-use log::{error, warn};
-use mio::{net::UdpSocket, Events, Interest, Poll, Token};
+use crossbeam_channel::{select, Receiver, Sender};
+use log::error;
+use mio::Token;
 
 use super::{
     connection::Connection,
-    header::{Header, HEADER_SIZE},
-    send_buffer::SendBuffer,
+    header::SendType,
     socket::{run_udp_socket, UdpEvent},
 };
 
@@ -39,12 +32,6 @@ pub enum MessageType {
     ChallangeResponse = 4,
     ConnectionPayload = 5,
     Disconnect = 6,
-}
-
-#[derive(Clone, Copy)]
-pub enum SendType {
-    Reliable,
-    Unreliable,
 }
 
 pub struct Process {
@@ -132,22 +119,13 @@ impl Process {
     }
 
     fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) {
-        let connection = self
-            .connections
-            .entry(addr)
-            .or_insert(Connection::new(addr, 0 /*TODO: fix */));
+        let connection = self.connections.entry(addr).or_insert(Connection::new(
+            addr,
+            &self.send_tx,
+            0, /*TODO: fix */
+        ));
 
-        let header = Header::read(data);
-        //TODO: check if its duplicate
-
-        connection.reliable_channel.update_remote_seq(header.seq);
-        //mark messages as sent
-        connection
-            .reliable_channel
-            .mark_sent_packets(header.ack, header.ack_bits);
-
-        //send ack
-        connection.reliable_channel.send_ack = true;
+        connection.reliable_channel.read(data);
 
         self.out_events
             .send(Event::Receive(connection.identity.id, data.to_vec()))
@@ -156,26 +134,13 @@ impl Process {
 
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connections.get_mut(&addr) {
-            let send_buffer = connection.reliable_channel.create_send_buffer(Some(&data));
-            self.send_tx
-                .send((addr, send_buffer.seq, send_buffer.data.to_vec()))
-                .unwrap();
+            connection.send_reliable(Some(&data));
         }
     }
 
     fn update(&mut self) {
         for connection in self.connections.values_mut() {
-            if connection.reliable_channel.send_ack {
-                let send_buffer = connection.reliable_channel.create_send_buffer(None);
-                self.send_tx
-                    .send((
-                        connection.identity.addr,
-                        send_buffer.seq,
-                        send_buffer.data.to_vec(),
-                    ))
-                    .unwrap();
-                connection.reliable_channel.send_ack = false;
-            }
+            connection.update()
         }
     }
 

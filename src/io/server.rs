@@ -3,7 +3,10 @@ use std::{io, net::SocketAddr, thread};
 use crossbeam_channel::{Receiver, Sender};
 use log::{error, warn};
 
-use super::inner_server::{Event, Process, SendType};
+use super::{
+    header::SendType,
+    inner_server::{Event, Process},
+};
 
 pub struct Server {
     in_sends: Sender<(SocketAddr, Vec<u8>, SendType)>,
@@ -34,9 +37,13 @@ impl Server {
         })
     }
 
-    pub fn send(&self, addr: SocketAddr, data: &[u8], send_type: SendType) {}
+    pub fn send(&self, addr: SocketAddr, data: &[u8], send_type: SendType) {
+        self.in_sends
+            .send((addr, data.to_vec(), send_type))
+            .unwrap();
+    }
 
     pub fn recv(&self) -> Option<Event> {
-        None
+        unimplemented!()
     }
 }
