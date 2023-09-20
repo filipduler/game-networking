@@ -2,6 +2,7 @@ use std::{io, net::SocketAddr, thread};
 
 use crossbeam_channel::{Receiver, Sender};
 use log::{error, warn};
+use mio::net::UdpSocket;
 
 use super::{
     header::SendType,
@@ -14,14 +15,12 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn start(host: SocketAddr, max_clients: usize) -> io::Result<Self> {
-        env_logger::init();
-
+    pub fn start(addr: SocketAddr, max_clients: usize) -> io::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
 
         thread::spawn(
-            move || match Process::bind(host, max_clients, send_tx, recv_rx) {
+            move || match Process::bind(addr, max_clients, send_tx, recv_rx) {
                 Ok(mut process) => {
                     if let Err(e) = process.start() {
                         error!("error while running starting: {}", e)

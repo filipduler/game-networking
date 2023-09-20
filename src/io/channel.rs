@@ -1,30 +1,60 @@
 use std::{net::SocketAddr, rc::Rc};
 
-use super::{
-    header::{Header, SendType, HEADER_SIZE},
-    send_buffer::{SendBufferManager, SendPayload},
-    sequence_buffer::SequenceBuffer,
-    BUFFER_SIZE, MAGIC_NUMBER_HEADER, RESENT_DURATION,
-};
-use bit_field::BitField;
 use crossbeam_channel::Sender;
 
+use super::{
+    header::{Header, SendType},
+    send_buffer::{SendBufferManager, SendPayload},
+    RESENT_DURATION,
+};
+
 pub struct Channel {
+    pub addr: SocketAddr,
+    pub unreliable_local_seq: u32,
     pub local_seq: u32,
     pub remote_seq: u32,
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
+    sender: Sender<(SocketAddr, u32, Vec<u8>)>,
 }
 
 impl Channel {
-    pub fn new() -> Self {
+    pub fn new(addr: SocketAddr, sender: &Sender<(SocketAddr, u32, Vec<u8>)>) -> Self {
         Self {
+            addr,
+            unreliable_local_seq: 0,
             local_seq: 0,
             remote_seq: 0,
             send_ack: false,
             send_buffer: SendBufferManager::new(),
+            sender: sender.clone(),
         }
+    }
+
+    pub fn resend_reliable(&mut self, seq: u32, payload: Vec<u8>) {
+        self.sender.send((self.addr, seq, payload)).unwrap();
+        self.send_ack = false;
+    }
+
+    pub fn send_reliable(&mut self, data: Option<&[u8]>) {
+        let send_buffer = self.create_send_buffer(data);
+        self.sender
+            .send((self.addr, send_buffer.seq, send_buffer.data.to_vec()))
+            .unwrap();
+        self.send_ack = false;
+    }
+
+    pub fn send_unreliable(&mut self, data: Option<&[u8]>) {
+        let mut header = Header::new(self.unreliable_local_seq, SendType::Unreliable);
+        self.write_header_ack_fiels(&mut header);
+
+        let payload = Header::create_packet(&header, data);
+
+        self.unreliable_local_seq += 1;
+        self.send_ack = false;
+
+        self.sender.send((self.addr, header.seq, payload)).unwrap();
     }
 
     pub fn read(&mut self, data: &[u8]) {
@@ -98,10 +128,17 @@ impl Channel {
 
 #[cfg(test)]
 mod tests {
+    use bit_field::BitField;
+
+    fn test_channel() -> Channel {
+        let (t1, t2) = crossbeam_channel::unbounded();
+        Channel::new("127.0.0.1:21344".parse().unwrap(), &t1)
+    }
+
     use super::*;
     #[test]
     fn marking_received_bitfields() {
-        let mut channel = Channel::new();
+        let mut channel = test_channel();
         channel.local_seq = 50;
         channel.remote_seq = 70;
 
@@ -123,7 +160,7 @@ mod tests {
 
     #[test]
     fn generating_received_bitfields() {
-        let mut channel = Channel::new();
+        let mut channel = test_channel();
         channel.local_seq = 50;
         channel.remote_seq = 70;
 

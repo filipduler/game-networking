@@ -1,37 +1,66 @@
-use std::{
-    io,
-    net::{SocketAddr, UdpSocket},
+use std::{io, net::SocketAddr, thread};
+
+use crossbeam_channel::{Receiver, Sender};
+use log::error;
+use mio::net::UdpSocket;
+
+use super::{
+    channel::Channel,
+    header::{Header, SendType, HEADER_SIZE},
+    inner_server::{Event, MessageType},
+    socket::{run_udp_socket, UdpEvent},
+    MAGIC_NUMBER_HEADER,
 };
 
-use super::{channel::Channel, header::HEADER_SIZE, MAGIC_NUMBER_HEADER};
-
 pub struct Client {
-    socket: UdpSocket,
+    local_addr: SocketAddr,
+    remote_addr: SocketAddr,
     channel: Channel,
-    buf: [u8; 1 << 16],
+    //UDP channels
+    send_tx: Sender<(SocketAddr, u32, Vec<u8>)>,
+    recv_rx: Receiver<UdpEvent>,
 }
 
 impl Client {
     pub fn connect(local_addr: SocketAddr, remote_addr: SocketAddr) -> io::Result<Self> {
-        let socket = UdpSocket::bind(local_addr)?;
+        let (send_tx, send_rx) = crossbeam_channel::unbounded();
+        let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
+
+        let mut socket = UdpSocket::bind(local_addr)?;
         socket.connect(remote_addr)?;
 
+        thread::spawn(move || {
+            if let Err(e) = run_udp_socket(&mut socket, true, send_rx, recv_tx) {
+                error!("error while running udp server: {}", e)
+            }
+        });
+
         Ok(Client {
-            socket,
-            channel: Channel::new(),
-            buf: [0_u8; 1 << 16],
+            local_addr,
+            remote_addr,
+            channel: Channel::new(local_addr, &send_tx),
+            send_tx,
+            recv_rx,
         })
     }
 
-    pub fn send(&mut self, data: Vec<u8>) -> io::Result<()> {
-        let send_buffer = self.channel.create_send_buffer(Some(&data));
-        self.socket.send(&send_buffer.data)?;
-
-        Ok(())
+    pub fn send(&mut self, data: Vec<u8>) {
+        self.channel.send_reliable(Some(&data));
     }
 
     pub fn read(&mut self) -> Option<Vec<u8>> {
-        let packet_size = self.socket.recv(&mut self.buf).unwrap();
+        match self.recv_rx.recv() {
+            Ok(event) => match event {
+                UdpEvent::Read(_, data) => {
+                    self.channel.read(&data);
+                }
+                UdpEvent::Sent(_, seq, sent_at) => {
+                    self.channel.send_buffer.mark_sent(seq, sent_at);
+                }
+            },
+            Err(e) => panic!("error receiving {e}"),
+        }
+        /*let packet_size = self.socket.recv(&mut self.buf).unwrap();
         println!("received packet or length {packet_size}");
 
         if packet_size >= 4 + HEADER_SIZE && self.buf[..4] == MAGIC_NUMBER_HEADER {
@@ -45,7 +74,7 @@ impl Client {
                 vec[..data_length].copy_from_slice(src);
                 return Some(vec);
             }
-        }
+        }*/
         None
     }
 }

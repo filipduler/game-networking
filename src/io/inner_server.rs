@@ -8,7 +8,7 @@ use std::{
 
 use crossbeam_channel::{select, Receiver, Sender};
 use log::error;
-use mio::Token;
+use mio::{net::UdpSocket, Token};
 
 use super::{
     connection::Connection,
@@ -72,9 +72,11 @@ impl Process {
     pub fn start(&mut self) -> io::Result<()> {
         let s_send_rx = self.send_rx.clone();
         let s_recv_tx = self.recv_tx.clone();
-        let s_addr = self.addr;
+
+        let mut socket = UdpSocket::bind(self.addr)?;
+
         thread::spawn(move || {
-            if let Err(e) = run_udp_socket(s_addr, s_send_rx, s_recv_tx) {
+            if let Err(e) = run_udp_socket(&mut socket, false, s_send_rx, s_recv_tx) {
                 error!("error while running udp server: {}", e)
             }
         });
@@ -134,7 +136,7 @@ impl Process {
 
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connections.get_mut(&addr) {
-            connection.send_reliable(Some(&data));
+            connection.reliable_channel.send_reliable(Some(&data));
         }
     }
 

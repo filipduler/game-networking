@@ -1,5 +1,5 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
-use log::warn;
+use log::{info, warn};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::io;
@@ -17,17 +17,18 @@ pub enum UdpEvent {
 const UDP_SOCKET: Token = Token(0);
 
 pub fn run_udp_socket(
-    addr: SocketAddr,
+    socket: &mut UdpSocket,
+    client_mode: bool,
     send_receiver: Receiver<(SocketAddr, u32, Vec<u8>)>,
     event_sender: Sender<UdpEvent>,
 ) -> io::Result<()> {
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(1);
 
-    let mut socket = UdpSocket::bind(addr)?;
+    info!("started udp socket on {}", socket.local_addr().unwrap());
 
     poll.registry()
-        .register(&mut socket, UDP_SOCKET, Interest::READABLE)?;
+        .register(socket, UDP_SOCKET, Interest::READABLE)?;
 
     let mut buf = [0; 1 << 16];
 
@@ -39,7 +40,7 @@ pub fn run_udp_socket(
         //check if there are and send requests
         if !send_receiver.is_empty() {
             poll.registry().reregister(
-                &mut socket,
+                socket,
                 UDP_SOCKET,
                 Interest::READABLE | Interest::WRITABLE,
             )?;
@@ -73,7 +74,13 @@ pub fn run_udp_socket(
                                 }
                             };
 
-                            match socket.send_to(&data.2, data.0) {
+                            let send_result = if client_mode {
+                                socket.send(&data.2)
+                            } else {
+                                socket.send_to(&data.2, data.0)
+                            };
+
+                            match send_result {
                                 Ok(_) => {
                                     //TODO: handle unwrap
                                     event_sender
@@ -95,11 +102,8 @@ pub fn run_udp_socket(
 
                         //if we sent all of the packets in the channel we can switch back to readable events
                         if send_finished {
-                            poll.registry().reregister(
-                                &mut socket,
-                                UDP_SOCKET,
-                                Interest::READABLE,
-                            )?;
+                            poll.registry()
+                                .reregister(socket, UDP_SOCKET, Interest::READABLE)?;
                         }
                     } else if event.is_readable() {
                         // In this loop we receive all packets queued for the socket.

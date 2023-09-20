@@ -8,6 +8,8 @@ mod tests {
 
     #[test]
     fn it_works() {
+        env_logger::init();
+
         let client_addr = "127.0.0.1:9091".parse().unwrap();
         let server_addr = "127.0.0.1:9090".parse().unwrap();
 
@@ -17,7 +19,8 @@ mod tests {
         let data = vec![1, 3, 4];
 
         //to establish connection
-        client.send(data.clone()).unwrap();
+        client.send(data.clone());
+        _ = client.read();
         _ = client.read();
 
         server.send(client_addr, &data, SendType::Reliable);
