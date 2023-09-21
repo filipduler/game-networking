@@ -19,6 +19,7 @@ use super::{
 // A token to allow us to identify which event is for the `UdpSocket`.
 const UDP_SOCKET: Token = Token(0);
 pub enum Event {
+    Start,
     Connect,
     Disconnect,
     Receive(u32, Vec<u8>),
@@ -72,11 +73,10 @@ impl Process {
     pub fn start(&mut self) -> io::Result<()> {
         let s_send_rx = self.send_rx.clone();
         let s_recv_tx = self.recv_tx.clone();
-
-        let mut socket = UdpSocket::bind(self.addr)?;
+        let s_addr = self.addr;
 
         thread::spawn(move || {
-            if let Err(e) = run_udp_socket(&mut socket, false, s_send_rx, s_recv_tx) {
+            if let Err(e) = run_udp_socket(s_addr, None, s_send_rx, s_recv_tx) {
                 error!("error while running udp server: {}", e)
             }
         });
@@ -102,6 +102,9 @@ impl Process {
                             if let Some(conn) = self.connections.get_mut(&addr) {
                                 conn.reliable_channel.send_buffer.mark_sent(seq, sent_at);
                             }
+                        },
+                        Ok(UdpEvent::Start) => {
+                            self.out_events.send(Event::Start).unwrap();
                         },
                         Err(e) => panic!("panic reading udp event {}", e)
                     }

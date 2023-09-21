@@ -21,10 +21,8 @@ mod tests {
         //to establish connection
         client.send(data.clone());
         _ = client.read();
-        _ = client.read();
 
         server.send(client_addr, &data, SendType::Reliable);
-        _ = client.read();
         loop {
             _ = client.read();
         }

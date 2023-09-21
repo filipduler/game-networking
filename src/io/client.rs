@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, thread};
+use std::{io, net::SocketAddr, thread, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender};
 use log::error;
@@ -26,14 +26,16 @@ impl Client {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
 
-        let mut socket = UdpSocket::bind(local_addr)?;
-        socket.connect(remote_addr)?;
-
         thread::spawn(move || {
-            if let Err(e) = run_udp_socket(&mut socket, true, send_rx, recv_tx) {
+            if let Err(e) = run_udp_socket(local_addr, Some(remote_addr), send_rx, recv_tx) {
                 error!("error while running udp server: {}", e)
             }
         });
+
+        match recv_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(UdpEvent::Start) => {}
+            _ => panic!("failed waiting for start event"),
+        };
 
         Ok(Client {
             local_addr,
@@ -57,6 +59,7 @@ impl Client {
                 UdpEvent::Sent(_, seq, sent_at) => {
                     self.channel.send_buffer.mark_sent(seq, sent_at);
                 }
+                _ => {}
             },
             Err(e) => panic!("error receiving {e}"),
         }

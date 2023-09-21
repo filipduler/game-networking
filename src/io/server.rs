@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, thread};
+use std::{io, net::SocketAddr, thread, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender};
 use log::{error, warn};
@@ -29,6 +29,11 @@ impl Server {
                 Err(e) => error!("error while binding process: {}", e),
             },
         );
+
+        match send_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Event::Start) => {}
+            _ => panic!("failed waiting for start event"),
+        };
 
         Ok(Server {
             in_sends: recv_tx,

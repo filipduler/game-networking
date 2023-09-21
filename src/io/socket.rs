@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use crate::io::MAGIC_NUMBER_HEADER;
 
 pub enum UdpEvent {
+    Start,
     Sent(SocketAddr, u32, Instant),
     Read(SocketAddr, Vec<u8>),
 }
@@ -17,18 +18,26 @@ pub enum UdpEvent {
 const UDP_SOCKET: Token = Token(0);
 
 pub fn run_udp_socket(
-    socket: &mut UdpSocket,
-    client_mode: bool,
+    local_addr: SocketAddr,
+    remote_addr_opt: Option<SocketAddr>,
     send_receiver: Receiver<(SocketAddr, u32, Vec<u8>)>,
     event_sender: Sender<UdpEvent>,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(1);
 
-    info!("started udp socket on {}", socket.local_addr().unwrap());
+    let mut socket = UdpSocket::bind(local_addr)?;
+
+    let client_mode = remote_addr_opt.is_some();
+    if let Some(remote_addr) = remote_addr_opt {
+        socket.connect(remote_addr)?;
+    }
+
+    //emit on start event
+    event_sender.send(UdpEvent::Start)?;
 
     poll.registry()
-        .register(socket, UDP_SOCKET, Interest::READABLE)?;
+        .register(&mut socket, UDP_SOCKET, Interest::READABLE)?;
 
     let mut buf = [0; 1 << 16];
 
@@ -40,7 +49,7 @@ pub fn run_udp_socket(
         //check if there are and send requests
         if !send_receiver.is_empty() {
             poll.registry().reregister(
-                socket,
+                &mut socket,
                 UDP_SOCKET,
                 Interest::READABLE | Interest::WRITABLE,
             )?;
@@ -51,13 +60,13 @@ pub fn run_udp_socket(
             if err.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
-            return Err(err);
+            return Err(err.into());
         }
 
         // Process each event.
         for event in events.iter() {
             match event.token() {
-                UDP_SOCKET => loop {
+                UDP_SOCKET => {
                     if event.is_writable() {
                         let mut send_finished = true;
 
@@ -82,19 +91,20 @@ pub fn run_udp_socket(
 
                             match send_result {
                                 Ok(_) => {
-                                    //TODO: handle unwrap
-                                    event_sender
-                                        .send(UdpEvent::Sent(data.0, data.1, Instant::now()))
-                                        .unwrap();
+                                    event_sender.send(UdpEvent::Sent(
+                                        data.0,
+                                        data.1,
+                                        Instant::now(),
+                                    ))?;
                                 }
-                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                Err(ref e) if would_block(e) => {
                                     //send would block so we store the last packet and try again
                                     unsent_packet = Some(data);
                                     send_finished = false;
                                     break;
                                 }
                                 Err(e) => {
-                                    return Err(e);
+                                    return Err(e.into());
                                 }
                                 _ => {}
                             };
@@ -102,36 +112,40 @@ pub fn run_udp_socket(
 
                         //if we sent all of the packets in the channel we can switch back to readable events
                         if send_finished {
-                            poll.registry()
-                                .reregister(socket, UDP_SOCKET, Interest::READABLE)?;
+                            poll.registry().reregister(
+                                &mut socket,
+                                UDP_SOCKET,
+                                Interest::READABLE,
+                            )?;
                         }
                     } else if event.is_readable() {
                         // In this loop we receive all packets queued for the socket.
-                        match socket.recv_from(&mut buf) {
-                            Ok((packet_size, source_address)) => {
-                                if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
-                                    //TODO: handle unwrap
-                                    event_sender
-                                        .send(UdpEvent::Read(
+                        loop {
+                            match socket.recv_from(&mut buf) {
+                                Ok((packet_size, source_address)) => {
+                                    if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
+                                        event_sender.send(UdpEvent::Read(
                                             source_address,
                                             buf[4..packet_size].to_vec(),
-                                        ))
-                                        .unwrap();
+                                        ))?;
+                                    }
                                 }
-                            }
-                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                break;
-                            }
-                            Err(e) => {
-                                return Err(e);
+                                Err(ref e) if would_block(e) => break,
+                                Err(e) => {
+                                    return Err(e.into());
+                                }
                             }
                         }
                     }
-                },
+                }
                 _ => {
                     warn!("Got event for unexpected token: {:?}", event);
                 }
             }
         }
     }
+}
+
+fn would_block(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::WouldBlock
 }
