@@ -19,12 +19,12 @@ mod tests {
         let data = vec![1, 3, 4];
 
         //to establish connection
-        client.send(data.clone());
-        _ = client.read();
+        client.send(&data, SendType::Reliable).unwrap();
+        let mut res = client.read();
 
-        server.send(client_addr, &data, SendType::Reliable);
+        server.send(client_addr, &data, SendType::Reliable).unwrap();
         loop {
-            _ = client.read();
+            res = client.read();
         }
     }
 }

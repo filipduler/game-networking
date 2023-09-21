@@ -8,55 +8,53 @@ use std::{
 
 use crossbeam_channel::{select, Receiver, Sender};
 use log::error;
-use mio::{net::UdpSocket, Token};
 
 use super::{
     connection::Connection,
     header::SendType,
-    socket::{run_udp_socket, UdpEvent},
+    socket::{run_udp_socket, ServerSendPacket, UdpEvent},
 };
 
-// A token to allow us to identify which event is for the `UdpSocket`.
-const UDP_SOCKET: Token = Token(0);
-pub enum Event {
+pub enum ServerEvent {
     Start,
     Connect,
     Disconnect,
     Receive(u32, Vec<u8>),
 }
 
-#[repr(u8)]
-pub enum MessageType {
-    ConnectionRequest = 1,
-    ConnectionDenied = 2,
-    Challange = 3,
-    ChallangeResponse = 4,
-    ConnectionPayload = 5,
-    Disconnect = 6,
-}
-
-pub struct Process {
+pub struct ServerProcess {
     addr: SocketAddr,
     connections: HashMap<SocketAddr, Connection>,
     //API channels
-    out_events: Sender<Event>,
+    out_events: Sender<ServerEvent>,
     in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
     //UDP channels
-    send_rx: Receiver<(SocketAddr, u32, Vec<u8>)>,
-    send_tx: Sender<(SocketAddr, u32, Vec<u8>)>,
+    send_tx: Sender<ServerSendPacket>,
     recv_rx: Receiver<UdpEvent>,
-    recv_tx: Sender<UdpEvent>,
 }
 
-impl Process {
+impl ServerProcess {
     pub fn bind(
         addr: SocketAddr,
         max_clients: usize,
-        out_events: Sender<Event>,
+        out_events: Sender<ServerEvent>,
         in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
     ) -> std::io::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
+
+        thread::spawn(move || {
+            if let Err(e) = run_udp_socket(addr, None, send_rx, recv_tx) {
+                error!("error while running udp server: {}", e)
+            }
+        });
+
+        match recv_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(UdpEvent::Start) => {
+                out_events.send(ServerEvent::Start).unwrap();
+            }
+            _ => panic!("failed waiting for start event"),
+        };
 
         Ok(Self {
             addr,
@@ -64,23 +62,11 @@ impl Process {
             out_events,
             connections: HashMap::with_capacity(max_clients),
             send_tx,
-            send_rx,
-            recv_tx,
             recv_rx,
         })
     }
 
     pub fn start(&mut self) -> io::Result<()> {
-        let s_send_rx = self.send_rx.clone();
-        let s_recv_tx = self.recv_tx.clone();
-        let s_addr = self.addr;
-
-        thread::spawn(move || {
-            if let Err(e) = run_udp_socket(s_addr, None, s_send_rx, s_recv_tx) {
-                error!("error while running udp server: {}", e)
-            }
-        });
-
         //to clean up stuff
         let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
 
@@ -98,15 +84,13 @@ impl Process {
                                 &data,
                             );
                         },
-                        Ok(UdpEvent::Sent(addr, seq, sent_at)) => {
+                        Ok(UdpEvent::SentServer(addr, seq, sent_at)) => {
                             if let Some(conn) = self.connections.get_mut(&addr) {
-                                conn.reliable_channel.send_buffer.mark_sent(seq, sent_at);
+                                conn.channel.send_buffer.mark_sent(seq, sent_at);
                             }
                         },
-                        Ok(UdpEvent::Start) => {
-                            self.out_events.send(Event::Start).unwrap();
-                        },
-                        Err(e) => panic!("panic reading udp event {}", e)
+                        Err(e) => panic!("panic reading udp event {}", e),
+                        _ => {},
                     }
 
                 },
@@ -130,16 +114,16 @@ impl Process {
             0, /*TODO: fix */
         ));
 
-        connection.reliable_channel.read(data);
+        connection.channel.read(data);
 
         self.out_events
-            .send(Event::Receive(connection.identity.id, data.to_vec()))
+            .send(ServerEvent::Receive(connection.identity.id, data.to_vec()))
             .unwrap();
     }
 
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connections.get_mut(&addr) {
-            connection.reliable_channel.send_reliable(Some(&data));
+            connection.channel.send_reliable(Some(&data));
         }
     }
 
@@ -233,16 +217,4 @@ impl Process {
          //TODO: handle errors
          self.sender.send((addr, data.to_vec())).unwrap()
      }*/
-}
-
-fn extract_message_type(value: u8) -> Option<MessageType> {
-    match value {
-        1 => Some(MessageType::ConnectionRequest),
-        2 => Some(MessageType::ConnectionDenied),
-        3 => Some(MessageType::Challange),
-        4 => Some(MessageType::ChallangeResponse),
-        5 => Some(MessageType::ConnectionPayload),
-        6 => Some(MessageType::Disconnect),
-        _ => None,
-    }
 }

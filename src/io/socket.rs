@@ -10,19 +10,29 @@ use crate::io::MAGIC_NUMBER_HEADER;
 
 pub enum UdpEvent {
     Start,
-    Sent(SocketAddr, u32, Instant),
+    SentServer(SocketAddr, u32, Instant),
+    SentClient(u32, Instant),
     Read(SocketAddr, Vec<u8>),
+}
+
+pub trait UdpSender {
+    fn send(&self, socket: &UdpSocket) -> io::Result<usize>;
+    fn send_event(&self) -> UdpEvent;
+    fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self;
 }
 
 // A token to allow us to identify which event is for the `UdpSocket`.
 const UDP_SOCKET: Token = Token(0);
 
-pub fn run_udp_socket(
+pub fn run_udp_socket<T: UdpSender>(
     local_addr: SocketAddr,
     remote_addr_opt: Option<SocketAddr>,
-    send_receiver: Receiver<(SocketAddr, u32, Vec<u8>)>,
+    send_receiver: Receiver<T>,
     event_sender: Sender<UdpEvent>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<()>
+where
+    T: Clone,
+{
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(1);
 
@@ -83,19 +93,11 @@ pub fn run_udp_socket(
                                 }
                             };
 
-                            let send_result = if client_mode {
-                                socket.send(&data.2)
-                            } else {
-                                socket.send_to(&data.2, data.0)
-                            };
+                            let send_result = data.send(&socket);
 
                             match send_result {
                                 Ok(_) => {
-                                    event_sender.send(UdpEvent::Sent(
-                                        data.0,
-                                        data.1,
-                                        Instant::now(),
-                                    ))?;
+                                    event_sender.send(data.send_event())?;
                                 }
                                 Err(ref e) if would_block(e) => {
                                     //send would block so we store the last packet and try again
@@ -148,4 +150,45 @@ pub fn run_udp_socket(
 
 fn would_block(e: &io::Error) -> bool {
     e.kind() == io::ErrorKind::WouldBlock
+}
+
+#[derive(Clone)]
+pub struct ClientSendPacket {
+    pub seq: u32,
+    pub data: Vec<u8>,
+}
+
+impl UdpSender for ClientSendPacket {
+    fn send(&self, socket: &UdpSocket) -> io::Result<usize> {
+        socket.send(&self.data)
+    }
+
+    fn send_event(&self) -> UdpEvent {
+        UdpEvent::SentClient(self.seq, Instant::now())
+    }
+
+    fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self {
+        ClientSendPacket { seq, data }
+    }
+}
+
+#[derive(Clone)]
+pub struct ServerSendPacket {
+    pub seq: u32,
+    pub addr: SocketAddr,
+    pub data: Vec<u8>,
+}
+
+impl UdpSender for ServerSendPacket {
+    fn send(&self, socket: &UdpSocket) -> io::Result<usize> {
+        socket.send_to(&self.data, self.addr)
+    }
+
+    fn send_event(&self) -> UdpEvent {
+        UdpEvent::SentServer(self.addr, self.seq, Instant::now())
+    }
+
+    fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self {
+        ServerSendPacket { seq, data, addr }
+    }
 }

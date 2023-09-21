@@ -9,26 +9,20 @@ use rand::Rng;
 
 use super::{
     channel::Channel,
-    header::{Header, SendType, HEADER_SIZE},
-    send_buffer::SendBufferManager,
-    sequence_buffer::SequenceBuffer,
-    BUFFER_SIZE, MAGIC_NUMBER_HEADER,
+    header::{Header, SendType},
+    socket::{ServerSendPacket, UdpSender},
 };
 static CONNECTION_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 pub struct Connection {
     pub identity: Identity,
-    pub reliable_channel: Channel,
+    pub channel: Channel<ServerSendPacket>,
     pub received_at: Instant,
     pub last_received: Instant,
 }
 
 impl Connection {
-    pub fn new(
-        addr: SocketAddr,
-        sender: &Sender<(SocketAddr, u32, Vec<u8>)>,
-        client_salt: u64,
-    ) -> Self {
+    pub fn new(addr: SocketAddr, sender: &Sender<ServerSendPacket>, client_salt: u64) -> Self {
         let server_salt = rand::thread_rng().gen();
 
         Self {
@@ -40,27 +34,27 @@ impl Connection {
                 session_key: client_salt ^ server_salt,
                 accepted: false,
             },
-            reliable_channel: Channel::new(addr, sender),
+            channel: Channel::<ServerSendPacket>::new(addr, sender),
             received_at: Instant::now(),
             last_received: Instant::now(),
         }
     }
 
     pub fn update(&mut self) {
-        let resend_packets = self.reliable_channel.get_redelivery_packet();
+        let resend_packets = self.channel.get_redelivery_packet();
         for packet in resend_packets {
             let mut header = Header::new(packet.seq, SendType::Reliable);
-            self.reliable_channel.write_header_ack_fiels(&mut header);
+            self.channel.write_header_ack_fiels(&mut header);
 
             let payload = Header::create_packet(&header, Some(&packet.data));
 
-            self.reliable_channel.resend_reliable(packet.seq, payload);
+            self.channel.resend_reliable(packet.seq, payload);
 
-            self.reliable_channel.send_ack = false;
+            self.channel.send_ack = false;
         }
 
-        if self.reliable_channel.send_ack {
-            self.reliable_channel.send_unreliable(None);
+        if self.channel.send_ack {
+            self.channel.send_unreliable(None);
         }
     }
 }

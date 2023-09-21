@@ -5,10 +5,11 @@ use crossbeam_channel::Sender;
 use super::{
     header::{Header, SendType},
     send_buffer::{SendBufferManager, SendPayload},
+    socket::UdpSender,
     RESENT_DURATION,
 };
 
-pub struct Channel {
+pub struct Channel<T: UdpSender> {
     pub addr: SocketAddr,
     pub unreliable_local_seq: u32,
     pub local_seq: u32,
@@ -16,11 +17,11 @@ pub struct Channel {
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
-    sender: Sender<(SocketAddr, u32, Vec<u8>)>,
+    sender: Sender<T>,
 }
 
-impl Channel {
-    pub fn new(addr: SocketAddr, sender: &Sender<(SocketAddr, u32, Vec<u8>)>) -> Self {
+impl<T: UdpSender> Channel<T> {
+    pub fn new(addr: SocketAddr, sender: &Sender<T>) -> Self {
         Self {
             addr,
             unreliable_local_seq: 0,
@@ -33,14 +34,18 @@ impl Channel {
     }
 
     pub fn resend_reliable(&mut self, seq: u32, payload: Vec<u8>) {
-        self.sender.send((self.addr, seq, payload)).unwrap();
+        self.sender.send(T::new(seq, payload, self.addr)).unwrap();
         self.send_ack = false;
     }
 
     pub fn send_reliable(&mut self, data: Option<&[u8]>) {
         let send_buffer = self.create_send_buffer(data);
         self.sender
-            .send((self.addr, send_buffer.seq, send_buffer.data.to_vec()))
+            .send(T::new(
+                send_buffer.seq,
+                send_buffer.data.to_vec(),
+                self.addr,
+            ))
             .unwrap();
         self.send_ack = false;
     }
@@ -54,7 +59,9 @@ impl Channel {
         self.unreliable_local_seq += 1;
         self.send_ack = false;
 
-        self.sender.send((self.addr, header.seq, payload)).unwrap();
+        self.sender
+            .send(T::new(header.seq, payload, self.addr))
+            .unwrap();
     }
 
     pub fn read(&mut self, data: &[u8]) {
@@ -130,10 +137,12 @@ impl Channel {
 mod tests {
     use bit_field::BitField;
 
-    fn test_channel() -> Channel {
+    fn test_channel() -> Channel<ServerSendPacket> {
         let (t1, t2) = crossbeam_channel::unbounded();
-        Channel::new("127.0.0.1:21344".parse().unwrap(), &t1)
+        Channel::<ServerSendPacket>::new("127.0.0.1:21344".parse().unwrap(), &t1)
     }
+
+    use crate::io::socket::ServerSendPacket;
 
     use super::*;
     #[test]
