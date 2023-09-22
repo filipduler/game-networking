@@ -19,6 +19,7 @@ pub trait UdpSender {
     fn send(&self, socket: &UdpSocket) -> io::Result<usize>;
     fn send_event(&self) -> UdpEvent;
     fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self;
+    fn delivery_required(&self) -> bool;
 }
 
 // A token to allow us to identify which event is for the `UdpSocket`.
@@ -97,7 +98,9 @@ where
 
                             match send_result {
                                 Ok(_) => {
-                                    event_sender.send(data.send_event())?;
+                                    if data.delivery_required() {
+                                        event_sender.send(data.send_event())?;
+                                    }
                                 }
                                 Err(ref e) if would_block(e) => {
                                     //send would block so we store the last packet and try again
@@ -170,6 +173,10 @@ impl UdpSender for ClientSendPacket {
     fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self {
         ClientSendPacket { seq, data }
     }
+
+    fn delivery_required(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -177,6 +184,18 @@ pub struct ServerSendPacket {
     pub seq: u32,
     pub addr: SocketAddr,
     pub data: Vec<u8>,
+    pub delivery_required: bool,
+}
+
+impl ServerSendPacket {
+    pub fn new_non_delivery(data: Vec<u8>, addr: SocketAddr) -> Self {
+        ServerSendPacket {
+            seq: 0,
+            data,
+            addr,
+            delivery_required: false,
+        }
+    }
 }
 
 impl UdpSender for ServerSendPacket {
@@ -189,6 +208,15 @@ impl UdpSender for ServerSendPacket {
     }
 
     fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self {
-        ServerSendPacket { seq, data, addr }
+        ServerSendPacket {
+            seq,
+            data,
+            addr,
+            delivery_required: true,
+        }
+    }
+
+    fn delivery_required(&self) -> bool {
+        self.delivery_required
     }
 }

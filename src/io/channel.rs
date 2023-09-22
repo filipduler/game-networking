@@ -9,6 +9,7 @@ use super::{
     RESENT_DURATION,
 };
 
+#[derive(Clone)]
 pub struct Channel<T: UdpSender> {
     pub addr: SocketAddr,
     pub unreliable_local_seq: u32,

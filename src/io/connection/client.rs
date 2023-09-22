@@ -7,34 +7,27 @@ use std::{
 use crossbeam_channel::Sender;
 use rand::Rng;
 
-use super::{
+use crate::io::{
     channel::Channel,
     header::{Header, SendType},
     socket::{ServerSendPacket, UdpSender},
 };
-static CONNECTION_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
-pub struct Connection {
+use super::identity::Identity;
+
+#[derive(Clone)]
+pub struct Client {
     pub identity: Identity,
     pub channel: Channel<ServerSendPacket>,
     pub received_at: Instant,
     pub last_received: Instant,
 }
 
-impl Connection {
-    pub fn new(addr: SocketAddr, sender: &Sender<ServerSendPacket>, client_salt: u64) -> Self {
-        let server_salt = rand::thread_rng().gen();
-
+impl Client {
+    pub fn new(identity: Identity, sender: &Sender<ServerSendPacket>) -> Self {
         Self {
-            identity: Identity {
-                id: CONNECTION_ID_COUNTER.fetch_add(1, Ordering::SeqCst),
-                addr,
-                client_salt,
-                server_salt,
-                session_key: client_salt ^ server_salt,
-                accepted: false,
-            },
-            channel: Channel::<ServerSendPacket>::new(addr, sender),
+            channel: Channel::<ServerSendPacket>::new(identity.addr, sender),
+            identity,
             received_at: Instant::now(),
             last_received: Instant::now(),
         }
@@ -57,13 +50,4 @@ impl Connection {
             self.channel.send_unreliable(None);
         }
     }
-}
-
-pub struct Identity {
-    pub id: u32,
-    pub addr: SocketAddr,
-    pub client_salt: u64,
-    pub server_salt: u64,
-    pub session_key: u64,
-    pub accepted: bool,
 }

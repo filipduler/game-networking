@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct SequenceBuffer<T> {
     pub values: Vec<Option<T>>,
     pub partition_by: u32,

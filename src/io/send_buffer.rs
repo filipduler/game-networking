@@ -4,6 +4,7 @@ use bit_field::BitField;
 
 use super::{sequence_buffer::SequenceBuffer, BUFFER_SIZE};
 
+#[derive(Clone)]
 pub struct SendBuffer {
     pub payload: Rc<SendPayload>,
     pub sent_at: Option<Instant>,
@@ -15,6 +16,7 @@ pub struct SendPayload {
     pub data: Vec<u8>,
 }
 
+#[derive(Clone)]
 pub struct SendBufferManager {
     pub buffers: SequenceBuffer<SendBuffer>,
     pub received_acks: SequenceBuffer<bool>,
