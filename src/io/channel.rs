@@ -5,12 +5,20 @@ use crossbeam_channel::Sender;
 use super::{
     header::{Header, SendType},
     send_buffer::{SendBufferManager, SendPayload},
-    socket::UdpSender,
+    socket::UdpSendEvent,
     RESENT_DURATION,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChannelType {
+    Client,
+    Server,
+}
+
 #[derive(Clone)]
-pub struct Channel<T: UdpSender> {
+pub struct Channel {
+    pub mode: ChannelType,
+    pub session_key: u64,
     pub addr: SocketAddr,
     pub unreliable_local_seq: u32,
     pub local_seq: u32,
@@ -18,12 +26,19 @@ pub struct Channel<T: UdpSender> {
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
-    sender: Sender<T>,
+    sender: Sender<UdpSendEvent>,
 }
 
-impl<T: UdpSender> Channel<T> {
-    pub fn new(addr: SocketAddr, sender: &Sender<T>) -> Self {
+impl Channel {
+    pub fn new(
+        addr: SocketAddr,
+        session_key: u64,
+        mode: ChannelType,
+        sender: &Sender<UdpSendEvent>,
+    ) -> Self {
         Self {
+            mode,
+            session_key,
             addr,
             unreliable_local_seq: 0,
             local_seq: 0,
@@ -35,24 +50,26 @@ impl<T: UdpSender> Channel<T> {
     }
 
     pub fn resend_reliable(&mut self, seq: u32, payload: Vec<u8>) {
-        self.sender.send(T::new(seq, payload, self.addr)).unwrap();
+        self.sender
+            .send(self.make_send_event(seq, payload))
+            .unwrap();
         self.send_ack = false;
     }
 
     pub fn send_reliable(&mut self, data: Option<&[u8]>) {
         let send_buffer = self.create_send_buffer(data);
         self.sender
-            .send(T::new(
-                send_buffer.seq,
-                send_buffer.data.to_vec(),
-                self.addr,
-            ))
+            .send(self.make_send_event(send_buffer.seq, send_buffer.data.to_vec()))
             .unwrap();
         self.send_ack = false;
     }
 
     pub fn send_unreliable(&mut self, data: Option<&[u8]>) {
-        let mut header = Header::new(self.unreliable_local_seq, SendType::Unreliable);
+        let mut header = Header::new(
+            self.unreliable_local_seq,
+            self.session_key,
+            SendType::Unreliable,
+        );
         self.write_header_ack_fiels(&mut header);
 
         let payload = Header::create_packet(&header, data);
@@ -61,7 +78,7 @@ impl<T: UdpSender> Channel<T> {
         self.send_ack = false;
 
         self.sender
-            .send(T::new(header.seq, payload, self.addr))
+            .send(self.make_send_event(header.seq, payload))
             .unwrap();
     }
 
@@ -83,7 +100,7 @@ impl<T: UdpSender> Channel<T> {
     }
 
     pub fn create_send_buffer(&mut self, data: Option<&[u8]>) -> Rc<SendPayload> {
-        let mut header = Header::new(self.local_seq, SendType::Reliable);
+        let mut header = Header::new(self.local_seq, self.session_key, SendType::Reliable);
         self.write_header_ack_fiels(&mut header);
 
         let payload = Header::create_packet(&header, data);
@@ -132,18 +149,28 @@ impl<T: UdpSender> Channel<T> {
     pub fn generate_ack_field(&self) -> u32 {
         self.send_buffer.generate_ack_field(self.remote_seq)
     }
+
+    fn make_send_event(&self, seq: u32, payload: Vec<u8>) -> UdpSendEvent {
+        match self.mode {
+            ChannelType::Client => UdpSendEvent::ClientTracking(payload, seq),
+            ChannelType::Server => UdpSendEvent::ServerTracking(payload, self.addr, seq),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use bit_field::BitField;
 
-    fn test_channel() -> Channel<ServerSendPacket> {
+    fn test_channel() -> Channel {
         let (t1, t2) = crossbeam_channel::unbounded();
-        Channel::<ServerSendPacket>::new("127.0.0.1:21344".parse().unwrap(), &t1)
+        Channel::new(
+            "127.0.0.1:21344".parse().unwrap(),
+            0, //TODO
+            ChannelType::Server,
+            &t1,
+        )
     }
-
-    use crate::io::socket::ServerSendPacket;
 
     use super::*;
     #[test]

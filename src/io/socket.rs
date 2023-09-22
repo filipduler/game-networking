@@ -2,12 +2,14 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use log::{info, warn};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
+use std::borrow::BorrowMut;
 use std::io;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use crate::io::MAGIC_NUMBER_HEADER;
 
+#[derive(PartialEq, Eq)]
 pub enum UdpEvent {
     Start,
     SentServer(SocketAddr, u32, Instant),
@@ -15,25 +17,23 @@ pub enum UdpEvent {
     Read(SocketAddr, Vec<u8>),
 }
 
-pub trait UdpSender {
-    fn send(&self, socket: &UdpSocket) -> io::Result<usize>;
-    fn send_event(&self) -> UdpEvent;
-    fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self;
-    fn delivery_required(&self) -> bool;
+#[derive(Clone)]
+pub enum UdpSendEvent {
+    ServerTracking(Vec<u8>, SocketAddr, u32),
+    ServerNonTracking(Vec<u8>, SocketAddr),
+    ClientTracking(Vec<u8>, u32),
+    ClientNonTracking(Vec<u8>),
 }
 
 // A token to allow us to identify which event is for the `UdpSocket`.
 const UDP_SOCKET: Token = Token(0);
 
-pub fn run_udp_socket<T: UdpSender>(
+pub fn run_udp_socket(
     local_addr: SocketAddr,
     remote_addr_opt: Option<SocketAddr>,
-    send_receiver: Receiver<T>,
+    send_receiver: Receiver<UdpSendEvent>,
     event_sender: Sender<UdpEvent>,
-) -> anyhow::Result<()>
-where
-    T: Clone,
-{
+) -> anyhow::Result<()> {
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(1);
 
@@ -52,7 +52,7 @@ where
 
     let mut buf = [0; 1 << 16];
 
-    let mut unsent_packet = None;
+    let mut unsent_packet = None::<UdpSendEvent>;
     let timeout = Duration::from_millis(1);
 
     // Our event loop.
@@ -82,8 +82,8 @@ where
                         let mut send_finished = true;
 
                         loop {
-                            let data = if unsent_packet.is_some() {
-                                unsent_packet.clone().unwrap()
+                            let data = if let Some(ref packet) = unsent_packet {
+                                packet.clone()
                             } else {
                                 match send_receiver.try_recv() {
                                     Ok(data) => data,
@@ -94,12 +94,31 @@ where
                                 }
                             };
 
-                            let send_result = data.send(&socket);
+                            let send_result = match data {
+                                UdpSendEvent::ServerTracking(ref data, addr, _) => {
+                                    socket.send_to(data, addr)
+                                }
+                                UdpSendEvent::ServerNonTracking(ref data, addr) => {
+                                    socket.send_to(data, addr)
+                                }
+                                UdpSendEvent::ClientTracking(ref data, _) => socket.send(data),
+                                UdpSendEvent::ClientNonTracking(ref data) => socket.send(data),
+                            };
 
                             match send_result {
                                 Ok(_) => {
-                                    if data.delivery_required() {
-                                        event_sender.send(data.send_event())?;
+                                    let event = match data {
+                                        UdpSendEvent::ServerTracking(_, addr, seq) => {
+                                            Some(UdpEvent::SentServer(addr, seq, Instant::now()))
+                                        }
+                                        UdpSendEvent::ClientTracking(_, seq) => {
+                                            Some(UdpEvent::SentClient(seq, Instant::now()))
+                                        }
+                                        _ => None,
+                                    };
+
+                                    if let Some(event) = event {
+                                        event_sender.send(event)?;
                                     }
                                 }
                                 Err(ref e) if would_block(e) => {
@@ -153,70 +172,4 @@ where
 
 fn would_block(e: &io::Error) -> bool {
     e.kind() == io::ErrorKind::WouldBlock
-}
-
-#[derive(Clone)]
-pub struct ClientSendPacket {
-    pub seq: u32,
-    pub data: Vec<u8>,
-}
-
-impl UdpSender for ClientSendPacket {
-    fn send(&self, socket: &UdpSocket) -> io::Result<usize> {
-        socket.send(&self.data)
-    }
-
-    fn send_event(&self) -> UdpEvent {
-        UdpEvent::SentClient(self.seq, Instant::now())
-    }
-
-    fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self {
-        ClientSendPacket { seq, data }
-    }
-
-    fn delivery_required(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Clone)]
-pub struct ServerSendPacket {
-    pub seq: u32,
-    pub addr: SocketAddr,
-    pub data: Vec<u8>,
-    pub delivery_required: bool,
-}
-
-impl ServerSendPacket {
-    pub fn new_non_delivery(data: Vec<u8>, addr: SocketAddr) -> Self {
-        ServerSendPacket {
-            seq: 0,
-            data,
-            addr,
-            delivery_required: false,
-        }
-    }
-}
-
-impl UdpSender for ServerSendPacket {
-    fn send(&self, socket: &UdpSocket) -> io::Result<usize> {
-        socket.send_to(&self.data, self.addr)
-    }
-
-    fn send_event(&self) -> UdpEvent {
-        UdpEvent::SentServer(self.addr, self.seq, Instant::now())
-    }
-
-    fn new(seq: u32, data: Vec<u8>, addr: SocketAddr) -> Self {
-        ServerSendPacket {
-            seq,
-            data,
-            addr,
-            delivery_required: true,
-        }
-    }
-
-    fn delivery_required(&self) -> bool {
-        self.delivery_required
-    }
 }

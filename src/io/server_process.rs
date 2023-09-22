@@ -12,7 +12,7 @@ use log::error;
 use super::{
     connection::ConnectionManager,
     header::SendType,
-    socket::{run_udp_socket, ServerSendPacket, UdpEvent},
+    socket::{run_udp_socket, UdpEvent, UdpSendEvent},
 };
 
 pub enum ServerEvent {
@@ -27,7 +27,7 @@ pub struct ServerProcess {
     out_events: Sender<ServerEvent>,
     in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
     //UDP channels
-    send_tx: Sender<ServerSendPacket>,
+    send_tx: Sender<UdpSendEvent>,
     recv_rx: Receiver<UdpEvent>,
     //connections
     connection_manager: ConnectionManager,
@@ -120,7 +120,7 @@ impl ServerProcess {
         else if let Ok(Some(payload)) = self.connection_manager.process_connect(&addr, data) {
             //TODO: handle unwrap
             self.send_tx
-                .send(ServerSendPacket::new_non_delivery(payload, addr))
+                .send(UdpSendEvent::ServerNonTracking(payload, addr))
                 .unwrap();
         }
     }

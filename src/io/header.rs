@@ -1,28 +1,31 @@
-use strum_macros::FromRepr;
+use crate::io::PacketType;
 
 use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
-pub const HEADER_SIZE: usize = 13;
+pub const HEADER_SIZE: usize = 21;
 
-#[repr(u8)]
-#[derive(Clone, Copy, FromRepr)]
 pub enum SendType {
-    Reliable = 1,
-    Unreliable = 2,
+    Reliable,
+    Unreliable,
 }
 
 pub struct Header {
     pub seq: u32,
-    pub message_type: SendType,
+    pub packet_type: PacketType,
+    pub session_key: u64,
     pub ack: u32,
     pub ack_bits: u32,
 }
 
 impl Header {
-    pub fn new(seq: u32, message_type: SendType) -> Self {
+    pub fn new(seq: u32, session_key: u64, send_type: SendType) -> Self {
         Self {
             seq,
-            message_type,
+            session_key,
+            packet_type: match send_type {
+                SendType::Reliable => PacketType::PayloadReliable,
+                SendType::Unreliable => PacketType::PayloadUnreliable,
+            },
             ack: 0,
             ack_bits: 0,
         }
@@ -37,7 +40,8 @@ impl Header {
         //TODO: check data length!
         let mut buffer = IntBuffer { index: 0 };
         buffer.write_u32(self.seq, data);
-        buffer.write_u8(self.message_type as u8, data);
+        buffer.write_u8(self.packet_type as u8, data);
+        buffer.write_u64(self.session_key, data);
         buffer.write_u32(self.ack, data);
         buffer.write_u32(self.ack_bits, data);
     }
@@ -53,7 +57,8 @@ impl Header {
         Header {
             seq: buffer.read_u32(data),
             //TODO: handle unwrap
-            message_type: SendType::from_repr(buffer.read_u8(data)).unwrap(),
+            session_key: buffer.read_u64(data),
+            packet_type: PacketType::from_repr(buffer.read_u8(data)).unwrap(),
             ack: buffer.read_u32(data),
             ack_bits: buffer.read_u32(data),
         }

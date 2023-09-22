@@ -2,14 +2,10 @@ use std::{io, net::SocketAddr, thread, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender};
 use log::error;
-use mio::net::UdpSocket;
 
 use super::{
-    channel::Channel,
     client_process::{ClientEvent, ClientProcess},
-    header::{Header, SendType, HEADER_SIZE},
-    socket::{run_udp_socket, UdpEvent},
-    MAGIC_NUMBER_HEADER,
+    header::SendType,
 };
 
 pub struct Client {
@@ -34,7 +30,7 @@ impl Client {
         });
 
         //wait for the start event
-        match send_rx.recv_timeout(Duration::from_secs(5)) {
+        match send_rx.recv_timeout(Duration::from_secs(50)) {
             Ok(ClientEvent::Start) => {}
             _ => panic!("failed waiting for start event"),
         };

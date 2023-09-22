@@ -4,7 +4,8 @@ pub struct IntBuffer {
 
 impl IntBuffer {
     pub fn write_slice(&mut self, v: &[u8], data: &mut [u8]) {
-        data[..v.len()].copy_from_slice(v);
+        data[self.index..self.index + v.len()].copy_from_slice(v);
+        self.index += v.len();
     }
 
     pub fn write_u64(&mut self, v: u64, data: &mut [u8]) {

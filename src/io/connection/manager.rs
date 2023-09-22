@@ -3,9 +3,9 @@ use std::{borrow::BorrowMut, collections::HashMap, net::SocketAddr};
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
-use crate::io::{int_buffer::IntBuffer, socket::ServerSendPacket, MAGIC_NUMBER_HEADER};
+use crate::io::{int_buffer::IntBuffer, socket::UdpSendEvent, PacketType, MAGIC_NUMBER_HEADER};
 
-use super::{client::Client, identity::Identity, ConnectionState};
+use super::{client::Client, identity::Identity};
 
 pub struct ConnectionManager {
     capacity: usize,
@@ -13,11 +13,11 @@ pub struct ConnectionManager {
     connections: Vec<Option<Client>>,
     addr_map: HashMap<SocketAddr, usize>,
     connect_requests: HashMap<SocketAddr, Identity>,
-    sender: Sender<ServerSendPacket>,
+    sender: Sender<UdpSendEvent>,
 }
 
 impl ConnectionManager {
-    pub fn new(max_clients: usize, sender: &Sender<ServerSendPacket>) -> Self {
+    pub fn new(max_clients: usize, sender: &Sender<UdpSendEvent>) -> Self {
         ConnectionManager {
             capacity: max_clients,
             active_clients: 0,
@@ -47,7 +47,7 @@ impl ConnectionManager {
         }
 
         let mut buffer = IntBuffer { index: 0 };
-        let state = if let Some(state) = ConnectionState::from_repr(buffer.read_u8(data)) {
+        let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
             state
         } else {
             bail!("invalid connection state in header");
@@ -56,14 +56,14 @@ impl ConnectionManager {
         //check if theres already a connect in process
         //if let Some(identity) = self.connect_requests.get_mut(addr) {
         if let Some(identity) = self.connect_requests.get(addr) {
-            if state == ConnectionState::ChallangeResponse
-                && identity.session_key == buffer.read_u64(&data)
+            if state == PacketType::ChallangeResponse
+                && identity.session_key == buffer.read_u64(data)
             {
                 return Ok(self.finish_challange(addr));
             }
         } else {
             let client_salt = buffer.read_u64(data);
-            let identity = Identity::new(*addr, client_salt, ConnectionState::Challenge);
+            let identity = Identity::new(*addr, client_salt);
 
             self.connect_requests.insert(*addr, identity.clone());
 
@@ -72,7 +72,7 @@ impl ConnectionManager {
             buffer.index = 0;
 
             buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-            buffer.write_u8(ConnectionState::Challenge as u8, &mut payload);
+            buffer.write_u8(PacketType::Challenge as u8, &mut payload);
             buffer.write_u64(client_salt, &mut payload);
             buffer.write_u64(identity.server_salt, &mut payload);
 
@@ -85,15 +85,13 @@ impl ConnectionManager {
     fn finish_challange(&mut self, addr: &SocketAddr) -> Option<Vec<u8>> {
         if let Some(connection_index) = self.get_free_slot_index() {
             //remove the identity from the connect requests
-            if let Some(mut identity) = self.connect_requests.remove(addr) {
-                identity.state = ConnectionState::ConnectionAccepted;
-
+            if let Some(identity) = self.connect_requests.remove(addr) {
                 let mut payload = vec![0_u8; 21];
                 let mut buffer = IntBuffer { index: 0 };
                 buffer.index = 0;
 
                 buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-                buffer.write_u8(identity.state as u8, &mut payload);
+                buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut payload);
                 buffer.write_u32(identity.id, &mut payload);
 
                 //insert the client
@@ -126,7 +124,7 @@ impl ConnectionManager {
 
     fn get_free_slot_index(&self) -> Option<usize> {
         for i in 0..self.capacity {
-            if self.connections.get(i).is_none() {
+            if self.connections.get(i).unwrap().is_none() {
                 return Some(i);
             }
         }

@@ -6,14 +6,19 @@ use std::{
     time::Duration,
 };
 
+use anyhow::bail;
 use crossbeam_channel::{select, Receiver, Sender};
 use log::error;
 use mio::{net::UdpSocket, Token};
+use rand::Rng;
 
 use super::{
-    channel::Channel,
+    channel::{Channel, ChannelType},
     header::SendType,
-    socket::{run_udp_socket, ClientSendPacket, UdpEvent, UdpSender},
+    int_buffer::IntBuffer,
+    login::login_loop,
+    socket::{run_udp_socket, UdpEvent, UdpSendEvent},
+    PacketType, MAGIC_NUMBER_HEADER,
 };
 
 pub enum ClientEvent {
@@ -22,12 +27,12 @@ pub enum ClientEvent {
 }
 
 pub struct ClientProcess {
-    channel: Channel<ClientSendPacket>,
+    channel: Channel,
     //API channels
     out_events: Sender<ClientEvent>,
     in_sends: Receiver<(Vec<u8>, SendType)>,
     //UDP channels
-    send_tx: Sender<ClientSendPacket>,
+    send_tx: Sender<UdpSendEvent>,
     recv_rx: Receiver<UdpEvent>,
 }
 
@@ -38,7 +43,7 @@ impl ClientProcess {
         out_events: Sender<ClientEvent>,
         in_sends: Receiver<(Vec<u8>, SendType)>,
     ) -> std::io::Result<Self> {
-        let (send_tx, send_rx) = crossbeam_channel::unbounded::<ClientSendPacket>();
+        let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
 
         thread::spawn(move || {
@@ -47,15 +52,10 @@ impl ClientProcess {
             }
         });
 
-        match recv_rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(UdpEvent::Start) => {
-                out_events.send(ClientEvent::Start).unwrap();
-            }
-            _ => panic!("failed waiting for start event"),
-        };
+        let (session_key, client_id) = login_loop(&recv_rx, &send_tx).expect("login failed");
 
         Ok(Self {
-            channel: Channel::new(local_addr, &send_tx),
+            channel: Channel::new(local_addr, session_key, ChannelType::Client, &send_tx),
             in_sends,
             out_events,
             send_tx,
@@ -76,10 +76,11 @@ impl ClientProcess {
                 recv(self.recv_rx) -> msg_result => {
                     match msg_result {
                         Ok(UdpEvent::Read(addr, data)) => {
+                            //TODO: handle unwrap
                             self.process_read_request(
                                 addr,
                                 &data,
-                            );
+                            ).unwrap();
                         },
                         Ok(UdpEvent::SentClient(seq, sent_at)) => {
                             self.channel.send_buffer.mark_sent(seq, sent_at);
@@ -113,7 +114,5 @@ impl ClientProcess {
         self.channel.send_reliable(Some(&data));
     }
 
-    fn update(&mut self) {
-        //TODO: add
-    }
+    fn update(&mut self) {}
 }
