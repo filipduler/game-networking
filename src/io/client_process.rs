@@ -103,9 +103,10 @@ impl ClientProcess {
     }
 
     fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
-        self.channel.read(data);
-
-        self.out_events.send(ClientEvent::Receive(data.to_vec()))?;
+        if let Some(payload) = self.channel.read(data)? {
+            self.out_events
+                .send(ClientEvent::Receive(payload.to_vec()))?;
+        }
 
         Ok(())
     }

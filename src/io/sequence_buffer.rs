@@ -18,7 +18,7 @@ impl<T> SequenceBuffer<T> {
     }
 
     pub fn sequence_to_index(&self, sequence: u32) -> usize {
-        return (sequence % self.partition_by) as usize;
+        (sequence % self.partition_by) as usize
     }
 
     pub fn insert(&mut self, sequence: u32, value: T) -> Option<&mut T> {
@@ -38,49 +38,39 @@ impl<T> SequenceBuffer<T> {
 
     pub fn is_some(&self, sequence: u32) -> bool {
         let index = self.sequence_to_index(sequence);
-        return self.values[index].is_some();
+        self.values[index].is_some()
+    }
+
+    pub fn is_none(&self, sequence: u32) -> bool {
+        let index = self.sequence_to_index(sequence);
+        self.values[index].is_none()
     }
 
     pub fn take(&mut self, sequence: u32) -> Option<T> {
         let index = self.sequence_to_index(sequence);
-        return self.values[index].take();
+        self.values[index].take()
     }
 
     pub fn get(&self, sequence: u32) -> Option<&T> {
         let index = self.sequence_to_index(sequence);
         match self.values.get(index) {
-            Some(value) => {
-                let value_ref = value.as_ref();
-                return value_ref;
-            }
-            None => {
-                return None;
-            }
+            Some(value) => value.as_ref(),
+            None => None,
         }
     }
 
     pub fn get_at_index(&self, index: usize) -> Option<&T> {
         match self.values.get(index) {
-            Some(value) => {
-                let value_ref = value.as_ref();
-                return value_ref;
-            }
-            None => {
-                return None;
-            }
+            Some(value) => value.as_ref(),
+            None => None,
         }
     }
 
     pub fn get_mut(&mut self, sequence: u32) -> Option<&mut T> {
         let index = self.sequence_to_index(sequence);
         match self.values.get_mut(index) {
-            Some(value) => {
-                let value_ref = value.as_mut();
-                return value_ref;
-            }
-            None => {
-                return None;
-            }
+            Some(value) => value.as_mut(),
+            None => None,
         }
     }
 }

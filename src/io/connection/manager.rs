@@ -119,7 +119,7 @@ impl ConnectionManager {
     }
 
     fn has_free_slots(&self) -> bool {
-        return self.active_clients < self.capacity;
+        self.active_clients < self.capacity
     }
 
     fn get_free_slot_index(&self) -> Option<usize> {

@@ -3,10 +3,11 @@ use std::{net::SocketAddr, rc::Rc};
 use crossbeam_channel::Sender;
 
 use super::{
-    header::{Header, SendType},
+    header::{Header, SendType, HEADER_SIZE},
     send_buffer::{SendBufferManager, SendPayload},
+    sequence_buffer::SequenceBuffer,
     socket::UdpSendEvent,
-    RESENT_DURATION,
+    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, RESENT_DURATION,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub struct Channel {
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
+    //tracking received packets for preventing emiting duplicate packets
+    received_packets: SequenceBuffer<()>,
     sender: Sender<UdpSendEvent>,
 }
 
@@ -45,6 +48,7 @@ impl Channel {
             remote_seq: 0,
             send_ack: false,
             send_buffer: SendBufferManager::new(),
+            received_packets: SequenceBuffer::with_capacity(BUFFER_SIZE),
             sender: sender.clone(),
         }
     }
@@ -82,16 +86,63 @@ impl Channel {
             .unwrap();
     }
 
-    pub fn read(&mut self, data: &[u8]) {
-        let header = Header::read(data);
-        //TODO: check if its duplicate
+    pub fn read<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<Option<&'a [u8]>> {
+        let header = Header::read(data)?;
 
-        self.update_remote_seq(header.seq);
-        //mark messages as sent
-        self.mark_sent_packets(header.ack, header.ack_bits);
+        match header.packet_type {
+            PacketType::PayloadReliable => {
+                let mut new_packet = false;
 
-        //send ack
-        self.send_ack = true;
+                //always mark the acks
+                self.mark_sent_packets(header.ack, header.ack_bits);
+
+                if self.update_remote_seq(header.seq) {
+                    //NOTE: packet is new and we dont have to check if its a duplicate
+                    self.send_ack = true;
+                    new_packet = true;
+                }
+                //if the sequence was not registered yet its a new packet
+                else if self.received_packets.is_none(header.seq) {
+                    new_packet = true;
+                    self.send_ack = true;
+                }
+
+                if new_packet {
+                    self.received_packets.insert(header.seq, ());
+                    return Ok(Some(&data[HEADER_SIZE..data.len()]));
+                }
+            }
+            PacketType::PayloadUnreliable => {
+                self.mark_sent_packets(header.ack, header.ack_bits);
+                return Ok(Some(&data[HEADER_SIZE..data.len()]));
+            }
+            _ => {}
+        }
+
+        Ok(None)
+    }
+
+    fn update_remote_seq(&mut self, remote_seq: u32) -> bool {
+        if remote_seq > self.remote_seq {
+            /*
+             We have to maintain a sliding window of active packets thats lesser
+             than the sequence buffer size so we can see which packets we received and
+             prevent duplicate 'Receive' events
+            */
+            //WARN: this is safe until we use sequence numbers as u32. If we switch to u16 we'll get overflow
+            let diff = remote_seq - self.remote_seq;
+            let start = self.remote_seq - BUFFER_WINDOW_SIZE;
+            for i in 0..diff {
+                self.received_packets.remove(start + i);
+            }
+
+            //update to the new remote sequence
+            self.remote_seq = remote_seq;
+
+            return true;
+        }
+
+        false
     }
 
     pub fn write_header_ack_fiels(&self, header: &mut Header) {
@@ -135,11 +186,7 @@ impl Channel {
         packets
     }
 
-    pub fn update_remote_seq(&mut self, remote_seq: u32) {
-        if remote_seq > self.remote_seq {
-            self.remote_seq = remote_seq;
-        }
-    }
+    pub fn is_duplicate(&self, remote_seq: u32) {}
 
     pub fn mark_sent_packets(&mut self, ack: u32, ack_bitfield: u32) {
         self.send_buffer.mark_sent_packets(ack, ack_bitfield)

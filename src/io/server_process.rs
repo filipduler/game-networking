@@ -69,6 +69,9 @@ impl ServerProcess {
         //to clean up stuff
         let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
 
+        //NOTE: a possiblity of how to prioritize interval_rx would be to do a interval.rx.try_recv
+        //on the start of every other channel read/write so it would always have a priority..
+
         loop {
             select! {
                 recv(interval_rx) -> _ => {
@@ -106,23 +109,21 @@ impl ServerProcess {
         }
     }
 
-    fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) {
+    fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
         //client exists, process the request
         if let Some(client) = self.connection_manager.get_client_mut(&addr) {
-            client.channel.read(data);
-
-            //TODO: handle unwrap
-            self.out_events
-                .send(ServerEvent::Receive(client.identity.id, data.to_vec()))
-                .unwrap();
+            if let Some(payload) = client.channel.read(data)? {
+                self.out_events
+                    .send(ServerEvent::Receive(client.identity.id, payload.to_vec()))?;
+            }
         }
         //client doesn't exist and theres space on the server, start the connection process
         else if let Ok(Some(payload)) = self.connection_manager.process_connect(&addr, data) {
-            //TODO: handle unwrap
             self.send_tx
-                .send(UdpSendEvent::ServerNonTracking(payload, addr))
-                .unwrap();
+                .send(UdpSendEvent::ServerNonTracking(payload, addr))?;
         }
+
+        Ok(())
     }
 
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {

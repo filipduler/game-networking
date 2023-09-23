@@ -15,6 +15,7 @@ pub mod server;
 pub mod server_process;
 mod socket;
 
+pub const BUFFER_WINDOW_SIZE: u32 = 256;
 pub const BUFFER_SIZE: u32 = 1024;
 pub const MAGIC_NUMBER_HEADER: [u8; 4] = [1, 27, 25, 14];
 pub const RESENT_DURATION: Duration = Duration::from_millis(100);
