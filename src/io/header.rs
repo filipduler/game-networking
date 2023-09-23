@@ -55,9 +55,9 @@ impl Header {
         let mut buffer = IntBuffer { index: 0 };
         Ok(Header {
             seq: buffer.read_u32(data),
-            session_key: buffer.read_u64(data),
             packet_type: PacketType::from_repr(buffer.read_u8(data))
                 .ok_or(anyhow!("invalid packet type"))?,
+            session_key: buffer.read_u64(data),
             ack: buffer.read_u32(data),
             ack_bits: buffer.read_u32(data),
         })

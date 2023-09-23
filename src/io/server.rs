@@ -46,7 +46,7 @@ impl Server {
         Ok(())
     }
 
-    pub fn recv(&self) -> Option<ServerEvent> {
-        unimplemented!()
+    pub fn read(&self) -> ServerEvent {
+        self.out_events.recv().unwrap()
     }
 }

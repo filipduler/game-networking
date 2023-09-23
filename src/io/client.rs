@@ -31,7 +31,7 @@ impl Client {
 
         //wait for the start event
         match send_rx.recv_timeout(Duration::from_secs(50)) {
-            Ok(ClientEvent::Start) => {}
+            Ok(ClientEvent::Connect(client_id)) => {}
             _ => panic!("failed waiting for start event"),
         };
 

@@ -22,7 +22,7 @@ use super::{
 };
 
 pub enum ClientEvent {
-    Start,
+    Connect(u32),
     Receive(Vec<u8>),
 }
 
@@ -42,7 +42,7 @@ impl ClientProcess {
         remote_addr: SocketAddr,
         out_events: Sender<ClientEvent>,
         in_sends: Receiver<(Vec<u8>, SendType)>,
-    ) -> std::io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
 
@@ -53,6 +53,8 @@ impl ClientProcess {
         });
 
         let (session_key, client_id) = login_loop(&recv_rx, &send_tx).expect("login failed");
+
+        out_events.send(ClientEvent::Connect(client_id))?;
 
         Ok(Self {
             channel: Channel::new(local_addr, session_key, ChannelType::Client, &send_tx),

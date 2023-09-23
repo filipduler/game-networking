@@ -56,7 +56,7 @@ impl Channel {
     pub fn resend_reliable(&mut self, seq: u32, payload: Vec<u8>) {
         self.sender
             .send(self.make_send_event(seq, payload))
-            .unwrap();
+            .expect("failed sent");
         self.send_ack = false;
     }
 
@@ -64,7 +64,7 @@ impl Channel {
         let send_buffer = self.create_send_buffer(data);
         self.sender
             .send(self.make_send_event(send_buffer.seq, send_buffer.data.to_vec()))
-            .unwrap();
+            .expect("failed sent");
         self.send_ack = false;
     }
 
@@ -91,20 +91,17 @@ impl Channel {
 
         match header.packet_type {
             PacketType::PayloadReliable => {
+                //always send ack even if its a duplicate
+                self.send_ack = true;
                 let mut new_packet = false;
 
                 //always mark the acks
                 self.mark_sent_packets(header.ack, header.ack_bits);
 
-                if self.update_remote_seq(header.seq) {
-                    //NOTE: packet is new and we dont have to check if its a duplicate
-                    self.send_ack = true;
-                    new_packet = true;
-                }
                 //if the sequence was not registered yet its a new packet
-                else if self.received_packets.is_none(header.seq) {
+                if self.update_remote_seq(header.seq) || self.received_packets.is_none(header.seq) {
+                    //NOTE: packet is new and we dont have to check if its a duplicate
                     new_packet = true;
-                    self.send_ack = true;
                 }
 
                 if new_packet {

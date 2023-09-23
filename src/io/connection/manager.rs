@@ -115,6 +115,7 @@ impl ConnectionManager {
     fn insert_client(&mut self, index: usize, identity: &Identity) {
         self.connections
             .insert(index, Some(Client::new(identity.clone(), &self.sender)));
+        self.addr_map.insert(identity.addr, index);
         self.active_clients += 1;
     }
 
