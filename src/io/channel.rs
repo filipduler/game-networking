@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, rc::Rc};
 
+use anyhow::bail;
 use crossbeam_channel::Sender;
 
 use super::{
@@ -7,7 +8,7 @@ use super::{
     send_buffer::{SendBufferManager, SendPayload},
     sequence_buffer::SequenceBuffer,
     socket::UdpSendEvent,
-    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, RESENT_DURATION,
+    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAX_PACKET_SIZE, RESEND_DURATION,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,6 +62,7 @@ impl Channel {
     }
 
     pub fn send_reliable(&mut self, data: Option<&[u8]>) {
+        //if data.len() > MAX_PACKET_SIZE {}
         let send_buffer = self.create_send_buffer(data);
         self.sender
             .send(self.make_send_event(send_buffer.seq, send_buffer.data.to_vec()))
@@ -87,7 +89,18 @@ impl Channel {
     }
 
     pub fn read<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<Option<&'a [u8]>> {
+        if data.len() < HEADER_SIZE {
+            return Ok(None);
+        }
+
         let header = Header::read(data)?;
+
+        //validate session key
+        if header.session_key != self.session_key {
+            bail!("incorrect session key");
+        }
+
+        let payload_size = data.len() - HEADER_SIZE;
 
         match header.packet_type {
             PacketType::PayloadReliable => {
@@ -106,12 +119,16 @@ impl Channel {
 
                 if new_packet {
                     self.received_packets.insert(header.seq, ());
-                    return Ok(Some(&data[HEADER_SIZE..data.len()]));
+                    if payload_size > 0 {
+                        return Ok(Some(&data[HEADER_SIZE..data.len()]));
+                    }
                 }
             }
             PacketType::PayloadUnreliable => {
                 self.mark_sent_packets(header.ack, header.ack_bits);
-                return Ok(Some(&data[HEADER_SIZE..data.len()]));
+                if payload_size > 0 {
+                    return Ok(Some(&data[HEADER_SIZE..data.len()]));
+                }
             }
             _ => {}
         }
@@ -167,7 +184,7 @@ impl Channel {
 
             while let Some(send_buffer) = self.send_buffer.buffers.get_mut(current_seq) {
                 if let Some(sent_at) = send_buffer.sent_at {
-                    if sent_at.elapsed() > RESENT_DURATION {
+                    if sent_at.elapsed() > RESEND_DURATION {
                         packets.push(send_buffer.payload.clone());
                         send_buffer.sent_at = None;
                     }

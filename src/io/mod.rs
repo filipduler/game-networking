@@ -15,10 +15,14 @@ pub mod server;
 pub mod server_process;
 mod socket;
 
-pub const BUFFER_WINDOW_SIZE: u32 = 256;
-pub const BUFFER_SIZE: u32 = 1024;
 pub const MAGIC_NUMBER_HEADER: [u8; 4] = [1, 27, 25, 14];
-pub const RESENT_DURATION: Duration = Duration::from_millis(100);
+
+pub const BUFFER_SIZE: u32 = 1024;
+//always has to be less than BUFFER SIZE
+pub const BUFFER_WINDOW_SIZE: u32 = 516;
+
+pub const RESEND_DURATION: Duration = Duration::from_millis(100);
+pub const MAX_PACKET_SIZE: usize = 1150;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, FromRepr)]

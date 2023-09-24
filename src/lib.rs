@@ -22,13 +22,12 @@ mod tests {
 
         //to establish connection
         client.send(&data, SendType::Reliable).unwrap();
-        let mut res = client.read();
 
         let ev = server.read();
 
         server.send(client_addr, &data, SendType::Reliable).unwrap();
         loop {
-            res = client.read();
+            let res = client.read();
         }
     }
 }

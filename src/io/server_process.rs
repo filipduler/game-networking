@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    io,
+    error, io,
     net::SocketAddr,
     thread::{self},
     time::Duration,
@@ -111,16 +111,30 @@ impl ServerProcess {
 
     fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
         //client exists, process the request
+        let mut disconnect_client_addr = None;
+
         if let Some(client) = self.connection_manager.get_client_mut(&addr) {
-            if let Some(payload) = client.channel.read(data)? {
-                self.out_events
-                    .send(ServerEvent::Receive(client.identity.id, payload.to_vec()))?;
+            match client.channel.read(data) {
+                Ok(Some(payload)) => {
+                    self.out_events
+                        .send(ServerEvent::Receive(client.identity.id, payload.to_vec()))?;
+                }
+                Err(e) => {
+                    error!("failed channel read: {e}");
+                    disconnect_client_addr = Some(client.identity.addr);
+                }
+                _ => {}
             }
         }
         //client doesn't exist and theres space on the server, start the connection process
         else if let Ok(Some(payload)) = self.connection_manager.process_connect(&addr, data) {
             self.send_tx
                 .send(UdpSendEvent::ServerNonTracking(payload, addr))?;
+        }
+
+        //disconnect the client
+        if let Some(addr) = disconnect_client_addr {
+            self.connection_manager.disconnect_client(addr);
         }
 
         Ok(())

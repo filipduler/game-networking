@@ -105,10 +105,8 @@ impl ConnectionManager {
     }
 
     pub fn update(&mut self) {
-        for connection in &mut self.connections {
-            if let Some(ref mut connection) = connection {
-                connection.update();
-            }
+        for connection in self.connections.iter_mut().flatten() {
+            connection.update();
         }
     }
 
@@ -119,16 +117,22 @@ impl ConnectionManager {
         self.active_clients += 1;
     }
 
+    pub fn disconnect_client(&mut self, addr: SocketAddr) {
+        if let Some(index) = self.addr_map.get(&addr).cloned() {
+            let slot = &self.connections[index];
+            if slot.is_some() {
+                self.active_clients -= 1;
+            }
+            self.addr_map.remove(&addr);
+            self.connections[index] = None;
+        }
+    }
+
     fn has_free_slots(&self) -> bool {
         self.active_clients < self.capacity
     }
 
     fn get_free_slot_index(&self) -> Option<usize> {
-        for i in 0..self.capacity {
-            if self.connections.get(i).unwrap().is_none() {
-                return Some(i);
-            }
-        }
-        None
+        (0..self.capacity).find(|&i| self.connections.get(i).unwrap().is_none())
     }
 }
