@@ -38,6 +38,7 @@ pub struct Channel {
     received_packets: SequenceBuffer<()>,
     sender: Sender<UdpSendEvent>,
     //fregments
+    fragment_group_seq: u32,
     fragment_buffer: SequenceBuffer<Vec<Option<Vec<u8>>>>,
 }
 
@@ -59,6 +60,7 @@ impl Channel {
             send_buffer: SendBufferManager::new(),
             received_packets: SequenceBuffer::with_capacity(BUFFER_SIZE),
             sender: sender.clone(),
+            fragment_group_seq: 0,
             fragment_buffer: SequenceBuffer::with_capacity(BUFFER_SIZE),
         }
     }
@@ -74,7 +76,6 @@ impl Channel {
         if data.len() > MAX_PACKET_SIZE {
             let packets = self.fragment_packet(data);
             for payload in &packets {
-                println!("wtf");
                 self.send(payload.seq, &payload.data)?;
             }
         } else {
@@ -96,7 +97,7 @@ impl Channel {
         );
         self.write_header_ack_fiels(&mut header);
 
-        let payload = Header::create_packet(&header, data);
+        let payload = header.create_packet(data);
 
         self.unreliable_local_seq += 1;
         self.send_ack = false;
@@ -115,9 +116,19 @@ impl Channel {
         let chunks = data.chunks(MAX_PACKET_SIZE);
         let mut packets = Vec::with_capacity(chunks.len());
 
+        let mut id: u8 = 0;
+        let chunk_count = chunks.len() as u8;
+
         for chunk in chunks {
-            packets.push(self.create_send_buffer(Some(chunk)));
+            packets.push(self.create_frag_send_buffer(
+                Some(chunk),
+                self.fragment_group_seq,
+                id,
+                chunk_count,
+            ));
+            id += 1;
         }
+        self.fragment_group_seq += 1;
 
         packets
     }
@@ -134,10 +145,10 @@ impl Channel {
             bail!("incorrect session key");
         }
 
-        let payload_size = data.len() - HEADER_SIZE;
+        let payload_size = data.len() - header.get_header_size();
 
         match header.packet_type {
-            PacketType::PayloadReliable => {
+            PacketType::PayloadReliable | PacketType::PayloadReliableFrag => {
                 let is_frag = header.packet_type.is_frag_variant();
 
                 //always send ack even if its a duplicate
@@ -157,7 +168,7 @@ impl Channel {
                     self.received_packets.insert(header.seq, ());
 
                     if payload_size > 0 {
-                        let payload = &data[HEADER_SIZE..data.len()];
+                        let payload = &data[header.get_header_size()..data.len()];
                         if is_frag {
                             if self.fragment_buffer.is_none(header.fragment_group_id) {
                                 self.fragment_buffer.insert(
@@ -177,9 +188,13 @@ impl Channel {
                             //TODO: prepare better structure to count if all fragments are ready
                             let mut ready = true;
                             for i in 0..header.fragment_size {
-                                if fragments.get(i as usize).is_none() {
-                                    ready = false;
-                                    break;
+                                if let Some(slot) = fragments.get(i as usize) {
+                                    if slot.is_none() {
+                                        ready = false;
+                                        break;
+                                    }
+                                } else {
+                                    unreachable!()
                                 }
                             }
 
@@ -204,7 +219,7 @@ impl Channel {
                     }
                 }
             }
-            PacketType::PayloadUnreliable => {
+            PacketType::PayloadUnreliable | PacketType::PayloadUnreliableFrag => {
                 let is_frag = header.packet_type.is_frag_variant();
                 //TODO: implement
                 if is_frag {
@@ -213,7 +228,9 @@ impl Channel {
 
                 self.mark_sent_packets(header.ack, header.ack_bits);
                 if payload_size > 0 {
-                    return Ok(ReadPayload::Ref(&data[HEADER_SIZE..data.len()]));
+                    return Ok(ReadPayload::Ref(
+                        &data[header.get_header_size()..data.len()],
+                    ));
                 }
             }
             _ => {}
@@ -258,7 +275,7 @@ impl Channel {
         let mut header = Header::new(self.local_seq, self.session_key, SendType::Reliable, false);
         self.write_header_ack_fiels(&mut header);
 
-        let payload = Header::create_packet(&header, data);
+        let payload = header.create_packet(data);
         let send_payload = self
             .send_buffer
             .push_send_buffer(self.local_seq, &payload, false);
@@ -283,7 +300,7 @@ impl Channel {
 
         self.write_header_ack_fiels(&mut header);
 
-        let payload = Header::create_packet(&header, data);
+        let payload = header.create_packet(data);
         let send_payload = self
             .send_buffer
             .push_send_buffer(self.local_seq, &payload, true);
@@ -316,8 +333,6 @@ impl Channel {
 
         packets
     }
-
-    pub fn is_duplicate(&self, remote_seq: u32) {}
 
     pub fn mark_sent_packets(&mut self, ack: u32, ack_bitfield: u32) {
         self.send_buffer.mark_sent_packets(ack, ack_bitfield)

@@ -65,9 +65,11 @@ impl Header {
         buffer.write_u32(self.ack, data);
         buffer.write_u32(self.ack_bits, data);
 
-        if self.packet_type == PacketType::PayloadReliableFrag
-            || self.packet_type == PacketType::PayloadUnreliableFrag
-        {
+        if self.packet_type.is_frag_variant() {
+            if data.len() < FRAG_HEADER_SIZE {
+                bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
+            }
+
             buffer.write_u32(self.fragment_group_id, data);
             buffer.write_u8(self.fragment_id, data);
             buffer.write_u8(self.fragment_size, data);
@@ -80,6 +82,7 @@ impl Header {
         if data.len() < HEADER_SIZE {
             bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
         }
+
         let mut buffer = IntBuffer { index: 0 };
 
         let seq = buffer.read_u32(data);
@@ -93,9 +96,11 @@ impl Header {
         let mut fragment_id = 0;
         let mut fragment_size = 0;
 
-        if packet_type == PacketType::PayloadReliableFrag
-            || packet_type == PacketType::PayloadUnreliableFrag
-        {
+        if packet_type.is_frag_variant() {
+            if data.len() < FRAG_HEADER_SIZE {
+                bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
+            }
+
             fragment_group_id = buffer.read_u32(data);
             fragment_id = buffer.read_u8(data);
             fragment_size = buffer.read_u8(data);
@@ -118,19 +123,29 @@ impl Header {
         })
     }
 
-    pub fn create_packet(header: &Header, data: Option<&[u8]>) -> Vec<u8> {
+    pub fn create_packet(&self, data: Option<&[u8]>) -> Vec<u8> {
         let mut buffer = IntBuffer { index: 0 };
+
+        let header_size = self.get_header_size();
 
         let data_len = if let Some(d) = data { d.len() } else { 0 };
 
-        let mut payload = vec![0_u8; data_len + HEADER_SIZE + 4];
+        let mut payload = vec![0_u8; data_len + header_size + 4];
         buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-        header.write(&mut payload, &mut buffer);
+        self.write(&mut payload, &mut buffer);
 
         if let Some(d) = data {
             buffer.write_slice(d, &mut payload);
         }
 
         payload
+    }
+
+    pub fn get_header_size(&self) -> usize {
+        if self.packet_type.is_frag_variant() {
+            FRAG_HEADER_SIZE
+        } else {
+            HEADER_SIZE
+        }
     }
 }

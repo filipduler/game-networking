@@ -44,7 +44,7 @@ impl Client {
             );
             self.channel.write_header_ack_fiels(&mut header);
 
-            let payload = Header::create_packet(&header, Some(&packet.data));
+            let payload = header.create_packet(Some(&packet.data));
 
             self.channel.resend_reliable(packet.seq, payload);
 
