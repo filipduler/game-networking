@@ -13,7 +13,7 @@ use mio::{net::UdpSocket, Token};
 use rand::Rng;
 
 use super::{
-    channel::{Channel, ChannelType},
+    channel::{Channel, ChannelType, ReadPayload},
     header::SendType,
     int_buffer::IntBuffer,
     login::login_loop,
@@ -105,16 +105,19 @@ impl ClientProcess {
     }
 
     fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
-        if let Some(payload) = self.channel.read(data)? {
-            self.out_events
-                .send(ClientEvent::Receive(payload.to_vec()))?;
+        match self.channel.read(data)? {
+            ReadPayload::Ref(payload) => self
+                .out_events
+                .send(ClientEvent::Receive(payload.to_vec()))?,
+            ReadPayload::Vec(payload) => self.out_events.send(ClientEvent::Receive(payload))?,
+            _ => {}
         }
 
         Ok(())
     }
 
     fn process_send_request(&mut self, data: Vec<u8>, send_type: SendType) {
-        self.channel.send_reliable(Some(&data));
+        self.channel.send_reliable(&data);
     }
 
     fn update(&mut self) {}

@@ -5,6 +5,7 @@ use crate::io::PacketType;
 use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
 pub const HEADER_SIZE: usize = 21;
+pub const FRAG_HEADER_SIZE: usize = 27;
 
 pub enum SendType {
     Reliable,
@@ -17,19 +18,39 @@ pub struct Header {
     pub session_key: u64,
     pub ack: u32,
     pub ack_bits: u32,
+
+    //optional fragment part
+    pub fragment_group_id: u32,
+    pub fragment_id: u8,
+    pub fragment_size: u8,
 }
 
 impl Header {
-    pub fn new(seq: u32, session_key: u64, send_type: SendType) -> Self {
+    pub fn new(seq: u32, session_key: u64, send_type: SendType, frag: bool) -> Self {
         Self {
             seq,
             session_key,
             packet_type: match send_type {
-                SendType::Reliable => PacketType::PayloadReliable,
-                SendType::Unreliable => PacketType::PayloadUnreliable,
+                SendType::Reliable => {
+                    if frag {
+                        PacketType::PayloadReliableFrag
+                    } else {
+                        PacketType::PayloadReliable
+                    }
+                }
+                SendType::Unreliable => {
+                    if frag {
+                        PacketType::PayloadUnreliableFrag
+                    } else {
+                        PacketType::PayloadUnreliable
+                    }
+                }
             },
             ack: 0,
             ack_bits: 0,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: 0,
         }
     }
 
@@ -44,6 +65,14 @@ impl Header {
         buffer.write_u32(self.ack, data);
         buffer.write_u32(self.ack_bits, data);
 
+        if self.packet_type == PacketType::PayloadReliableFrag
+            || self.packet_type == PacketType::PayloadUnreliableFrag
+        {
+            buffer.write_u32(self.fragment_group_id, data);
+            buffer.write_u8(self.fragment_id, data);
+            buffer.write_u8(self.fragment_size, data);
+        }
+
         Ok(())
     }
 
@@ -51,15 +80,41 @@ impl Header {
         if data.len() < HEADER_SIZE {
             bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
         }
-
         let mut buffer = IntBuffer { index: 0 };
+
+        let seq = buffer.read_u32(data);
+        let packet_type =
+            PacketType::from_repr(buffer.read_u8(data)).ok_or(anyhow!("invalid packet type"))?;
+        let session_key = buffer.read_u64(data);
+        let ack = buffer.read_u32(data);
+        let ack_bits = buffer.read_u32(data);
+
+        let mut fragment_group_id = 0;
+        let mut fragment_id = 0;
+        let mut fragment_size = 0;
+
+        if packet_type == PacketType::PayloadReliableFrag
+            || packet_type == PacketType::PayloadUnreliableFrag
+        {
+            fragment_group_id = buffer.read_u32(data);
+            fragment_id = buffer.read_u8(data);
+            fragment_size = buffer.read_u8(data);
+
+            //fragment id is 0 indexed
+            if fragment_id >= fragment_size {
+                bail!("fragment id cannot be larger or equal to fragment size");
+            }
+        }
+
         Ok(Header {
-            seq: buffer.read_u32(data),
-            packet_type: PacketType::from_repr(buffer.read_u8(data))
-                .ok_or(anyhow!("invalid packet type"))?,
-            session_key: buffer.read_u64(data),
-            ack: buffer.read_u32(data),
-            ack_bits: buffer.read_u32(data),
+            seq,
+            packet_type,
+            session_key,
+            ack,
+            ack_bits,
+            fragment_group_id,
+            fragment_id,
+            fragment_size,
         })
     }
 

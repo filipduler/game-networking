@@ -1,10 +1,24 @@
 #![allow(unused)]
 
+use rand::Rng;
+
 mod io;
+
+fn generate_random_u8_vector(length: usize) -> Vec<u8> {
+    let mut rng = rand::thread_rng();
+    let mut result = Vec::with_capacity(length);
+
+    for _ in 0..length {
+        let random_u8: u8 = rng.gen();
+        result.push(random_u8);
+    }
+
+    result
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::io::{client::Client, header::SendType, server::Server};
+    use crate::io::{client::Client, header::SendType, server::Server, MAX_PACKET_SIZE};
 
     use super::*;
 
@@ -18,14 +32,14 @@ mod tests {
         let mut server = Server::start(server_addr, 64).unwrap();
         let mut client = Client::connect(client_addr, server_addr).unwrap();
 
-        let data = vec![1, 3, 4];
+        let data = generate_random_u8_vector(MAX_PACKET_SIZE + 10);
 
         //to establish connection
         client.send(&data, SendType::Reliable).unwrap();
 
         let ev = server.read();
 
-        server.send(client_addr, &data, SendType::Reliable).unwrap();
+        //server.send(client_addr, &data, SendType::Reliable).unwrap();
         loop {
             let res = client.read();
         }

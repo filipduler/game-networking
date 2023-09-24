@@ -10,6 +10,7 @@ use crossbeam_channel::{select, Receiver, Sender};
 use log::error;
 
 use super::{
+    channel::ReadPayload,
     connection::ConnectionManager,
     header::SendType,
     socket::{run_udp_socket, UdpEvent, UdpSendEvent},
@@ -115,9 +116,13 @@ impl ServerProcess {
 
         if let Some(client) = self.connection_manager.get_client_mut(&addr) {
             match client.channel.read(data) {
-                Ok(Some(payload)) => {
+                Ok(ReadPayload::Ref(payload)) => {
                     self.out_events
                         .send(ServerEvent::Receive(client.identity.id, payload.to_vec()))?;
+                }
+                Ok(ReadPayload::Vec(payload)) => {
+                    self.out_events
+                        .send(ServerEvent::Receive(client.identity.id, payload))?;
                 }
                 Err(e) => {
                     error!("failed channel read: {e}");
@@ -142,7 +147,7 @@ impl ServerProcess {
 
     fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
         if let Some(connection) = self.connection_manager.get_client_mut(&addr) {
-            connection.channel.send_reliable(Some(&data));
+            connection.channel.send_reliable(&data);
         }
     }
 

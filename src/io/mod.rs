@@ -31,6 +31,14 @@ pub enum PacketType {
     Challenge = 2,
     ChallangeResponse = 3,
     ConnectionAccepted = 4,
-    PayloadReliable = 5,
-    PayloadUnreliable = 6,
+    PayloadReliableFrag = 5,
+    PayloadReliable = 6,
+    PayloadUnreliableFrag = 7,
+    PayloadUnreliable = 8,
+}
+
+impl PacketType {
+    pub fn is_frag_variant(&self) -> bool {
+        *self == PacketType::PayloadReliableFrag || *self == PacketType::PayloadUnreliableFrag
+    }
 }

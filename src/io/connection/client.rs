@@ -36,7 +36,12 @@ impl Client {
     pub fn update(&mut self) {
         let resend_packets = self.channel.get_redelivery_packet();
         for packet in resend_packets {
-            let mut header = Header::new(packet.seq, self.identity.session_key, SendType::Reliable);
+            let mut header = Header::new(
+                packet.seq,
+                self.identity.session_key,
+                SendType::Reliable,
+                packet.frag,
+            );
             self.channel.write_header_ack_fiels(&mut header);
 
             let payload = Header::create_packet(&header, Some(&packet.data));
