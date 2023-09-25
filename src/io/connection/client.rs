@@ -45,13 +45,11 @@ impl Client {
 
             let payload = header.create_packet(Some(&packet.data));
 
-            self.channel.resend_reliable(packet.seq, payload);
-
-            self.channel.send_ack = false;
+            self.channel.send(packet.seq, &payload);
         }
 
         if self.channel.send_ack {
-            self.channel.send_unreliable(None);
+            self.channel.send_empty_ack();
         }
     }
 }

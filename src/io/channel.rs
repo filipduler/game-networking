@@ -9,7 +9,8 @@ use super::{
     send_buffer::{SendBufferManager, SendPayload},
     sequence_buffer::SequenceBuffer,
     socket::UdpSendEvent,
-    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE, RESEND_DURATION,
+    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE, MAGIC_NUMBER_HEADER,
+    RESEND_DURATION,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,19 +64,13 @@ impl Channel {
         }
     }
 
-    pub fn resend_reliable(&mut self, seq: u32, payload: Vec<u8>) -> anyhow::Result<()> {
-        self.send(seq, &payload);
-        self.send_ack = false;
-
-        Ok(())
-    }
-
     pub fn send_reliable(&mut self, data: &[u8]) -> anyhow::Result<()> {
         if FragmentationManager::should_fragment(data.len()) {
-            let fragments = self.fragmentation.into_fragments(data);
+            let fragments = self.fragmentation.split_fragments(data);
             for chunk in &fragments.chunks {
-                let payload = self.create_frag_send_buffer(
+                let payload = self.create_send_buffer(
                     chunk.data,
+                    true,
                     fragments.group_id,
                     chunk.fragment_id,
                     fragments.chunk_count,
@@ -83,36 +78,49 @@ impl Channel {
                 self.send(payload.seq, &payload.data)?;
             }
         } else {
-            let payload = self.create_send_buffer(Some(data));
+            let payload = self.create_send_buffer(data, false, 0, 0, 0);
             self.send(payload.seq, &payload.data)?;
         }
 
-        self.send_ack = false;
+        Ok(())
+    }
+
+    pub fn send_unreliable(&mut self, data: &[u8]) -> anyhow::Result<()> {
+        if FragmentationManager::should_fragment(data.len()) {
+            let fragments = self.fragmentation.split_fragments(data);
+            for chunk in &fragments.chunks {
+                let (seq, payload) = self.create_unreliable_packet(
+                    chunk.data,
+                    true,
+                    fragments.group_id,
+                    chunk.fragment_id,
+                    fragments.chunk_count,
+                );
+                self.send(seq, &data)?;
+            }
+        } else {
+            let (seq, payload) = self.create_unreliable_packet(data, false, 0, 0, 0);
+            self.send(seq, &payload)?;
+        }
 
         Ok(())
     }
 
-    pub fn send_unreliable(&mut self, data: Option<&[u8]>) -> anyhow::Result<()> {
-        let mut header = Header::new(
-            self.unreliable_local_seq,
-            self.session_key,
-            SendType::Unreliable,
-            false,
-        );
-        self.write_header_ack_fiels(&mut header);
+    pub fn send_empty_ack(&mut self) -> anyhow::Result<()> {
+        let empty_arr = &MAGIC_NUMBER_HEADER[0..0];
 
-        let payload = header.create_packet(data);
+        let (seq, payload) = self.create_unreliable_packet(empty_arr, false, 0, 0, 0);
 
-        self.unreliable_local_seq += 1;
-        self.send_ack = false;
-
-        self.send(header.seq, &payload)?;
+        self.sender
+            .send(self.make_send_event(seq, payload.to_vec()))?;
 
         Ok(())
     }
 
-    fn send(&mut self, seq: u32, data: &[u8]) -> anyhow::Result<()> {
+    pub fn send(&mut self, seq: u32, data: &[u8]) -> anyhow::Result<()> {
         self.sender.send(self.make_send_event(seq, data.to_vec()))?;
+        self.send_ack = false;
+
         Ok(())
     }
 
@@ -219,29 +227,43 @@ impl Channel {
         header.ack_bits = self.generate_ack_field();
     }
 
-    pub fn create_send_buffer(&mut self, data: Option<&[u8]>) -> Rc<SendPayload> {
-        let mut header = Header::new(self.local_seq, self.session_key, SendType::Reliable, false);
-        self.write_header_ack_fiels(&mut header);
-
-        let payload = header.create_packet(data);
-        let send_payload = self
-            .send_buffer
-            .push_send_buffer(self.local_seq, &payload, false);
-
-        self.send_ack = false;
-        self.local_seq += 1;
-
-        send_payload
-    }
-
-    pub fn create_frag_send_buffer(
+    pub fn create_unreliable_packet(
         &mut self,
         data: &[u8],
+        frag: bool,
+        fragment_group_id: u32,
+        fragment_id: u8,
+        fragment_size: u8,
+    ) -> (u32, Vec<u8>) {
+        let mut header = Header::new(
+            self.unreliable_local_seq,
+            self.session_key,
+            SendType::Unreliable,
+            false,
+        );
+        header.fragment_group_id = fragment_group_id;
+        header.fragment_id = fragment_id;
+        header.fragment_size = fragment_size;
+
+        self.write_header_ack_fiels(&mut header);
+
+        let payload = header.create_packet(Some(data));
+        let seq = self.unreliable_local_seq;
+
+        self.unreliable_local_seq += 1;
+
+        (seq, payload)
+    }
+
+    pub fn create_send_buffer(
+        &mut self,
+        data: &[u8],
+        frag: bool,
         fragment_group_id: u32,
         fragment_id: u8,
         fragment_size: u8,
     ) -> Rc<SendPayload> {
-        let mut header = Header::new(self.local_seq, self.session_key, SendType::Reliable, true);
+        let mut header = Header::new(self.local_seq, self.session_key, SendType::Reliable, frag);
         header.fragment_group_id = fragment_group_id;
         header.fragment_id = fragment_id;
         header.fragment_size = fragment_size;
@@ -251,9 +273,8 @@ impl Channel {
         let payload = header.create_packet(Some(data));
         let send_payload = self
             .send_buffer
-            .push_send_buffer(self.local_seq, &payload, true);
+            .push_send_buffer(self.local_seq, &payload, frag);
 
-        self.send_ack = false;
         self.local_seq += 1;
 
         send_payload

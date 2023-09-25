@@ -26,7 +26,7 @@ impl FragmentationManager {
         length > FRAGMENT_SIZE
     }
 
-    pub fn into_fragments<'a>(&mut self, data: &'a [u8]) -> Fragments<'a> {
+    pub fn split_fragments<'a>(&mut self, data: &'a [u8]) -> Fragments<'a> {
         let chunks = data.chunks(FRAGMENT_SIZE);
         assert!(
             chunks.len() <= u8::MAX as usize,
