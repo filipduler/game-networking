@@ -10,7 +10,6 @@ use crate::io::{
 
 use super::identity::Identity;
 
-#[derive(Clone)]
 pub struct Client {
     pub identity: Identity,
     pub channel: Channel,

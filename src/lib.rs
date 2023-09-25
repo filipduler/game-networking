@@ -18,7 +18,7 @@ fn generate_random_u8_vector(length: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::{client::Client, header::SendType, server::Server, MAX_PACKET_SIZE};
+    use crate::io::{client::Client, header::SendType, server::Server, FRAGMENT_SIZE};
 
     use super::*;
 
@@ -32,7 +32,7 @@ mod tests {
         let mut server = Server::start(server_addr, 64).unwrap();
         let mut client = Client::connect(client_addr, server_addr).unwrap();
 
-        let data = generate_random_u8_vector(MAX_PACKET_SIZE + 10);
+        let data = generate_random_u8_vector(FRAGMENT_SIZE + 10);
 
         //to establish connection
         client.send(&data, SendType::Reliable).unwrap();

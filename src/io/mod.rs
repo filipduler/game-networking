@@ -6,9 +6,9 @@ pub mod channel;
 pub mod client;
 pub mod client_process;
 mod connection;
+mod fragmentation_manager;
 pub mod header;
 mod int_buffer;
-mod login;
 mod send_buffer;
 mod sequence_buffer;
 pub mod server;
@@ -22,7 +22,7 @@ pub const BUFFER_SIZE: u32 = 1024;
 pub const BUFFER_WINDOW_SIZE: u32 = 516;
 
 pub const RESEND_DURATION: Duration = Duration::from_millis(100);
-pub const MAX_PACKET_SIZE: usize = 1150;
+pub const FRAGMENT_SIZE: usize = 1150;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, FromRepr)]

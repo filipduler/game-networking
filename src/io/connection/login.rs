@@ -4,13 +4,13 @@ use anyhow::bail;
 use crossbeam_channel::{Receiver, Sender};
 use rand::Rng;
 
-use super::{
+use crate::io::{
     int_buffer::IntBuffer,
     socket::{UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
 };
 
-pub fn login_loop(
+pub fn try_login(
     reciever: &Receiver<UdpEvent>,
     sender: &Sender<UdpSendEvent>,
 ) -> anyhow::Result<(u64, u32)> {

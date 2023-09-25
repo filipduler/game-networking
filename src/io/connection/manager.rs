@@ -22,7 +22,7 @@ impl ConnectionManager {
             capacity: max_clients,
             active_clients: 0,
             addr_map: HashMap::with_capacity(max_clients),
-            connections: vec![None::<Client>; max_clients],
+            connections: (0..max_clients).map(|_| None).collect(),
             connect_requests: HashMap::new(),
             sender: sender.clone(),
         }

@@ -3,11 +3,13 @@ pub struct IntBuffer {
 }
 
 impl IntBuffer {
+    #[inline]
     pub fn write_slice(&mut self, v: &[u8], data: &mut [u8]) {
         data[self.index..self.index + v.len()].copy_from_slice(v);
         self.index += v.len();
     }
 
+    #[inline]
     pub fn write_u64(&mut self, v: u64, data: &mut [u8]) {
         data[self.index] = v as u8;
         self.index += 1;
@@ -28,6 +30,7 @@ impl IntBuffer {
         self.index += 1;
     }
 
+    #[inline]
     pub fn read_u64(&mut self, data: &[u8]) -> u64 {
         let value = (data[self.index] as u64)
             | (data[self.index + 1] as u64) << 8
@@ -41,6 +44,7 @@ impl IntBuffer {
         value
     }
 
+    #[inline]
     pub fn write_u32(&mut self, v: u32, data: &mut [u8]) {
         data[self.index] = v as u8;
         self.index += 1;
@@ -52,6 +56,7 @@ impl IntBuffer {
         self.index += 1;
     }
 
+    #[inline]
     pub fn read_u32(&mut self, data: &[u8]) -> u32 {
         let value = (data[self.index] as u32)
             | (data[self.index + 1] as u32) << 8
@@ -61,6 +66,7 @@ impl IntBuffer {
         value
     }
 
+    #[inline]
     pub fn write_u16(&mut self, v: u16, data: &mut [u8]) {
         data[self.index] = v as u8;
         self.index += 1;
@@ -68,28 +74,23 @@ impl IntBuffer {
         self.index += 1;
     }
 
+    #[inline]
     pub fn read_u16(&mut self, data: &[u8]) -> u16 {
         let value = (data[self.index] as u16) | (data[self.index + 1] as u16) << 8;
         self.index += 2;
         value
     }
 
+    #[inline]
     pub fn write_u8(&mut self, v: u8, data: &mut [u8]) {
         data[self.index] = v;
         self.index += 1;
     }
 
+    #[inline]
     pub fn read_u8(&mut self, data: &[u8]) -> u8 {
         let value = data[self.index];
         self.index += 1;
         value
-    }
-
-    pub fn u4_to_u8(v1: u8, v2: u8) -> u8 {
-        v1 | v2 << 4
-    }
-
-    pub fn u8_to_u4(byte: u8) -> (u8, u8) {
-        (byte & 0x0F, byte >> 4)
     }
 }

@@ -4,11 +4,12 @@ use anyhow::bail;
 use crossbeam_channel::Sender;
 
 use super::{
+    fragmentation_manager::FragmentationManager,
     header::{Header, SendType, HEADER_SIZE},
     send_buffer::{SendBufferManager, SendPayload},
     sequence_buffer::SequenceBuffer,
     socket::UdpSendEvent,
-    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAX_PACKET_SIZE, RESEND_DURATION,
+    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE, RESEND_DURATION,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -23,7 +24,6 @@ pub enum ReadPayload<'a> {
     None,
 }
 
-#[derive(Clone)]
 pub struct Channel {
     pub mode: ChannelType,
     pub session_key: u64,
@@ -37,9 +37,8 @@ pub struct Channel {
     //tracking received packets for preventing emiting duplicate packets
     received_packets: SequenceBuffer<()>,
     sender: Sender<UdpSendEvent>,
-    //fregments
-    fragment_group_seq: u32,
-    fragment_buffer: SequenceBuffer<Vec<Option<Vec<u8>>>>,
+    //fragmentation
+    fragmentation: FragmentationManager,
 }
 
 impl Channel {
@@ -60,8 +59,7 @@ impl Channel {
             send_buffer: SendBufferManager::new(),
             received_packets: SequenceBuffer::with_capacity(BUFFER_SIZE),
             sender: sender.clone(),
-            fragment_group_seq: 0,
-            fragment_buffer: SequenceBuffer::with_capacity(BUFFER_SIZE),
+            fragmentation: FragmentationManager::new(),
         }
     }
 
@@ -73,9 +71,15 @@ impl Channel {
     }
 
     pub fn send_reliable(&mut self, data: &[u8]) -> anyhow::Result<()> {
-        if data.len() > MAX_PACKET_SIZE {
-            let packets = self.fragment_packet(data);
-            for payload in &packets {
+        if FragmentationManager::should_fragment(data.len()) {
+            let fragments = self.fragmentation.into_fragments(data);
+            for chunk in &fragments.chunks {
+                let payload = self.create_frag_send_buffer(
+                    chunk.data,
+                    fragments.group_id,
+                    chunk.fragment_id,
+                    fragments.chunk_count,
+                );
                 self.send(payload.seq, &payload.data)?;
             }
         } else {
@@ -110,27 +114,6 @@ impl Channel {
     fn send(&mut self, seq: u32, data: &[u8]) -> anyhow::Result<()> {
         self.sender.send(self.make_send_event(seq, data.to_vec()))?;
         Ok(())
-    }
-
-    fn fragment_packet(&mut self, data: &[u8]) -> Vec<Rc<SendPayload>> {
-        let chunks = data.chunks(MAX_PACKET_SIZE);
-        let mut packets = Vec::with_capacity(chunks.len());
-
-        let mut id: u8 = 0;
-        let chunk_count = chunks.len() as u8;
-
-        for chunk in chunks {
-            packets.push(self.create_frag_send_buffer(
-                Some(chunk),
-                self.fragment_group_seq,
-                id,
-                chunk_count,
-            ));
-            id += 1;
-        }
-        self.fragment_group_seq += 1;
-
-        packets
     }
 
     pub fn read<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<ReadPayload<'a>> {
@@ -170,48 +153,13 @@ impl Channel {
                     if payload_size > 0 {
                         let payload = &data[header.get_header_size()..data.len()];
                         if is_frag {
-                            if self.fragment_buffer.is_none(header.fragment_group_id) {
-                                self.fragment_buffer.insert(
-                                    header.fragment_group_id,
-                                    (0..header.fragment_size).map(|_| None).collect(),
-                                );
-                            }
-
-                            //we can safely unwrap because we inserted the entry above
-                            let mut fragments = self
-                                .fragment_buffer
-                                .get_mut(header.fragment_group_id)
-                                .unwrap();
-
-                            fragments[header.fragment_id as usize] = Some(payload.to_vec());
-
-                            //TODO: prepare better structure to count if all fragments are ready
-                            let mut ready = true;
-                            for i in 0..header.fragment_size {
-                                if let Some(slot) = fragments.get(i as usize) {
-                                    if slot.is_none() {
-                                        ready = false;
-                                        break;
-                                    }
-                                } else {
-                                    unreachable!()
+                            if self.fragmentation.insert_fragment(&header, payload)? {
+                                if let Some(data) = self
+                                    .fragmentation
+                                    .build_fragment(header.fragment_group_id)?
+                                {
+                                    return Ok(ReadPayload::Vec(data));
                                 }
-                            }
-
-                            if ready {
-                                //TODO: use with_capacity
-                                let mut parts: Vec<u8> = Vec::new();
-                                for i in 0..header.fragment_size {
-                                    let chunk: &[u8] = fragments
-                                        .get(i as usize)
-                                        .unwrap()
-                                        .as_ref()
-                                        .unwrap()
-                                        .as_ref();
-                                    parts.extend(chunk);
-                                }
-
-                                return Ok(ReadPayload::Vec(parts));
                             }
                         } else {
                             return Ok(ReadPayload::Ref(payload));
@@ -288,7 +236,7 @@ impl Channel {
 
     pub fn create_frag_send_buffer(
         &mut self,
-        data: Option<&[u8]>,
+        data: &[u8],
         fragment_group_id: u32,
         fragment_id: u8,
         fragment_size: u8,
@@ -300,7 +248,7 @@ impl Channel {
 
         self.write_header_ack_fiels(&mut header);
 
-        let payload = header.create_packet(data);
+        let payload = header.create_packet(Some(data));
         let send_payload = self
             .send_buffer
             .push_send_buffer(self.local_seq, &payload, true);
