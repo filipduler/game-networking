@@ -321,10 +321,8 @@ mod tests {
     use super::*;
     #[test]
     fn marking_received_bitfields() {
-        //TODO: add overflow to the test
         let mut channel = test_channel();
-        channel.local_seq = 50;
-        channel.remote_seq = 70;
+        channel.local_seq = 5;
 
         let mut ack_bitfield = 0;
         ack_bitfield.set_bit(0, true);
@@ -332,40 +330,52 @@ mod tests {
         ack_bitfield.set_bit(15, true);
         ack_bitfield.set_bit(31, true);
 
-        channel.mark_sent_packets(50, ack_bitfield);
+        channel.mark_sent_packets(5, ack_bitfield);
 
-        assert!(*channel.send_buffer.received_acks.get(50).unwrap());
-        assert!(*channel.send_buffer.received_acks.get(49).unwrap());
-        assert!(*channel.send_buffer.received_acks.get(48).unwrap());
-        assert!(*channel.send_buffer.received_acks.get(34).unwrap());
-        assert!(*channel.send_buffer.received_acks.get(18).unwrap());
+        assert!(*channel
+            .send_buffer
+            .received_acks
+            .get(4_u16.wrapping_sub(0))
+            .unwrap());
+        assert!(*channel
+            .send_buffer
+            .received_acks
+            .get(4_u16.wrapping_sub(1))
+            .unwrap());
+        assert!(*channel
+            .send_buffer
+            .received_acks
+            .get(4_u16.wrapping_sub(15))
+            .unwrap());
+        assert!(*channel
+            .send_buffer
+            .received_acks
+            .get(4_u16.wrapping_sub(31))
+            .unwrap());
     }
 
     #[test]
     fn generating_received_bitfields() {
-        //TODO: add overflow to the test
-
         let mut channel = test_channel();
-        channel.local_seq = 50;
-        channel.remote_seq = 70;
+        channel.remote_seq = 5;
 
         let prev_remote_seq = channel.remote_seq - 1;
         channel
             .send_buffer
             .received_acks
-            .insert(prev_remote_seq, true);
+            .insert(prev_remote_seq.wrapping_sub(0), true);
         channel
             .send_buffer
             .received_acks
-            .insert(prev_remote_seq - 1, true);
+            .insert(prev_remote_seq.wrapping_sub(1), true);
         channel
             .send_buffer
             .received_acks
-            .insert(prev_remote_seq - 15, true);
+            .insert(prev_remote_seq.wrapping_sub(15), true);
         channel
             .send_buffer
             .received_acks
-            .insert(prev_remote_seq - 31, true);
+            .insert(prev_remote_seq.wrapping_sub(31), true);
 
         let mut ack_bitfield = 0;
         ack_bitfield.set_bit(0, true);

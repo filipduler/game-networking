@@ -56,9 +56,9 @@ impl SendBufferManager {
     pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32) {
         self.ack_packet(ack);
 
-        for bit_pos in 0..32 {
-            if ack_bitfield.get_bit(bit_pos) {
-                let seq = ack - bit_pos as u16 - 1;
+        for bit_pos in 0..32_u16 {
+            if ack_bitfield.get_bit(bit_pos as usize) {
+                let seq = ack.wrapping_sub(bit_pos).wrapping_sub(1);
                 self.ack_packet(seq);
             }
         }
