@@ -10,16 +10,16 @@ mod fragmentation_manager;
 pub mod header;
 mod int_buffer;
 mod send_buffer;
-mod sequence_buffer;
+mod sequence;
 pub mod server;
 pub mod server_process;
 mod socket;
 
 pub const MAGIC_NUMBER_HEADER: [u8; 4] = [1, 27, 25, 14];
 
-pub const BUFFER_SIZE: u32 = 1024;
+pub const BUFFER_SIZE: u16 = 1024;
 //always has to be less than BUFFER SIZE
-pub const BUFFER_WINDOW_SIZE: u32 = 516;
+pub const BUFFER_WINDOW_SIZE: u16 = 256;
 
 pub const RESEND_DURATION: Duration = Duration::from_millis(100);
 pub const FRAGMENT_SIZE: usize = 1150;

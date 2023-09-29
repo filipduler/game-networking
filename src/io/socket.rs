@@ -12,16 +12,16 @@ use crate::io::MAGIC_NUMBER_HEADER;
 #[derive(PartialEq, Eq)]
 pub enum UdpEvent {
     Start,
-    SentServer(SocketAddr, u32, Instant),
-    SentClient(u32, Instant),
+    SentServer(SocketAddr, u16, Instant),
+    SentClient(u16, Instant),
     Read(SocketAddr, Vec<u8>),
 }
 
 #[derive(Clone)]
 pub enum UdpSendEvent {
-    ServerTracking(Vec<u8>, SocketAddr, u32),
+    ServerTracking(Vec<u8>, SocketAddr, u16),
     ServerNonTracking(Vec<u8>, SocketAddr),
-    ClientTracking(Vec<u8>, u32),
+    ClientTracking(Vec<u8>, u16),
     ClientNonTracking(Vec<u8>),
 }
 

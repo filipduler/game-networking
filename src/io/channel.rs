@@ -7,7 +7,7 @@ use super::{
     fragmentation_manager::FragmentationManager,
     header::{Header, SendType, HEADER_SIZE},
     send_buffer::{SendBufferManager, SendPayload},
-    sequence_buffer::SequenceBuffer,
+    sequence::{Sequence, SequenceBuffer, WindowSequenceBuffer},
     socket::UdpSendEvent,
     PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE, MAGIC_NUMBER_HEADER,
     RESEND_DURATION,
@@ -29,14 +29,14 @@ pub struct Channel {
     pub mode: ChannelType,
     pub session_key: u64,
     pub addr: SocketAddr,
-    pub unreliable_local_seq: u32,
-    pub local_seq: u32,
-    pub remote_seq: u32,
+    pub unreliable_seq: u16,
+    pub local_seq: u16,
+    pub remote_seq: u16,
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
     //tracking received packets for preventing emiting duplicate packets
-    received_packets: SequenceBuffer<()>,
+    received_packets: WindowSequenceBuffer<()>,
     sender: Sender<UdpSendEvent>,
     //fragmentation
     fragmentation: FragmentationManager,
@@ -53,12 +53,12 @@ impl Channel {
             mode,
             session_key,
             addr,
-            unreliable_local_seq: 0,
+            unreliable_seq: 0,
             local_seq: 0,
             remote_seq: 0,
             send_ack: false,
             send_buffer: SendBufferManager::new(),
-            received_packets: SequenceBuffer::with_capacity(BUFFER_SIZE),
+            received_packets: WindowSequenceBuffer::with_size(BUFFER_SIZE, BUFFER_WINDOW_SIZE),
             sender: sender.clone(),
             fragmentation: FragmentationManager::new(),
         }
@@ -96,7 +96,7 @@ impl Channel {
                     chunk.fragment_id,
                     fragments.chunk_count,
                 );
-                self.send(seq, &data)?;
+                self.send(seq, data)?;
             }
         } else {
             let (seq, payload) = self.create_unreliable_packet(data, false, 0, 0, 0);
@@ -117,7 +117,7 @@ impl Channel {
         Ok(())
     }
 
-    pub fn send(&mut self, seq: u32, data: &[u8]) -> anyhow::Result<()> {
+    pub fn send(&mut self, seq: u16, data: &[u8]) -> anyhow::Result<()> {
         self.sender.send(self.make_send_event(seq, data.to_vec()))?;
         self.send_ack = false;
 
@@ -195,24 +195,8 @@ impl Channel {
         Ok(ReadPayload::None)
     }
 
-    fn update_remote_seq(&mut self, remote_seq: u32) -> bool {
-        if remote_seq > self.remote_seq {
-            /*
-             We have to maintain a sliding window of active packets thats lesser
-             than the sequence buffer size so we can see which packets we received and
-             prevent duplicate 'Receive' events
-            */
-            //WARN: this is safe until we use sequence numbers as u32. If we switch to u16 we'll get overflow
-            let diff = remote_seq - self.remote_seq;
-            let start = if self.remote_seq >= BUFFER_WINDOW_SIZE {
-                self.remote_seq - BUFFER_WINDOW_SIZE
-            } else {
-                0
-            };
-            for i in 0..diff {
-                self.received_packets.remove(start + i);
-            }
-
+    fn update_remote_seq(&mut self, remote_seq: u16) -> bool {
+        if Sequence::is_less_than(self.remote_seq, remote_seq) {
             //update to the new remote sequence
             self.remote_seq = remote_seq;
 
@@ -231,12 +215,12 @@ impl Channel {
         &mut self,
         data: &[u8],
         frag: bool,
-        fragment_group_id: u32,
+        fragment_group_id: u16,
         fragment_id: u8,
         fragment_size: u8,
-    ) -> (u32, Vec<u8>) {
+    ) -> (u16, Vec<u8>) {
         let mut header = Header::new(
-            self.unreliable_local_seq,
+            self.unreliable_seq,
             self.session_key,
             SendType::Unreliable,
             false,
@@ -248,9 +232,9 @@ impl Channel {
         self.write_header_ack_fiels(&mut header);
 
         let payload = header.create_packet(Some(data));
-        let seq = self.unreliable_local_seq;
+        let seq = self.unreliable_seq;
 
-        self.unreliable_local_seq += 1;
+        Sequence::increment(&mut self.unreliable_seq);
 
         (seq, payload)
     }
@@ -259,7 +243,7 @@ impl Channel {
         &mut self,
         data: &[u8],
         frag: bool,
-        fragment_group_id: u32,
+        fragment_group_id: u16,
         fragment_id: u8,
         fragment_size: u8,
     ) -> Rc<SendPayload> {
@@ -303,7 +287,7 @@ impl Channel {
         packets
     }
 
-    pub fn mark_sent_packets(&mut self, ack: u32, ack_bitfield: u32) {
+    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32) {
         self.send_buffer.mark_sent_packets(ack, ack_bitfield)
     }
 
@@ -312,7 +296,7 @@ impl Channel {
         self.send_buffer.generate_ack_field(self.remote_seq)
     }
 
-    fn make_send_event(&self, seq: u32, payload: Vec<u8>) -> UdpSendEvent {
+    fn make_send_event(&self, seq: u16, payload: Vec<u8>) -> UdpSendEvent {
         match self.mode {
             ChannelType::Client => UdpSendEvent::ClientTracking(payload, seq),
             ChannelType::Server => UdpSendEvent::ServerTracking(payload, self.addr, seq),
@@ -337,11 +321,11 @@ mod tests {
     use super::*;
     #[test]
     fn marking_received_bitfields() {
+        //TODO: add overflow to the test
         let mut channel = test_channel();
         channel.local_seq = 50;
         channel.remote_seq = 70;
 
-        //WARN: if seq ever gets converted to u16 we need to test for appropriately for it
         let mut ack_bitfield = 0;
         ack_bitfield.set_bit(0, true);
         ack_bitfield.set_bit(1, true);
@@ -359,6 +343,8 @@ mod tests {
 
     #[test]
     fn generating_received_bitfields() {
+        //TODO: add overflow to the test
+
         let mut channel = test_channel();
         channel.local_seq = 50;
         channel.remote_seq = 70;

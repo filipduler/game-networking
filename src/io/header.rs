@@ -4,8 +4,8 @@ use crate::io::PacketType;
 
 use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
-pub const HEADER_SIZE: usize = 21;
-pub const FRAG_HEADER_SIZE: usize = 27;
+pub const HEADER_SIZE: usize = 15;
+pub const FRAG_HEADER_SIZE: usize = 21;
 
 pub enum SendType {
     Reliable,
@@ -13,20 +13,20 @@ pub enum SendType {
 }
 
 pub struct Header {
-    pub seq: u32,
+    pub seq: u16,
     pub packet_type: PacketType,
     pub session_key: u64,
-    pub ack: u32,
+    pub ack: u16,
     pub ack_bits: u32,
 
     //optional fragment part
-    pub fragment_group_id: u32,
+    pub fragment_group_id: u16,
     pub fragment_id: u8,
     pub fragment_size: u8,
 }
 
 impl Header {
-    pub fn new(seq: u32, session_key: u64, send_type: SendType, frag: bool) -> Self {
+    pub fn new(seq: u16, session_key: u64, send_type: SendType, frag: bool) -> Self {
         Self {
             seq,
             session_key,
@@ -59,10 +59,10 @@ impl Header {
             bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
         }
 
-        buffer.write_u32(self.seq, data);
+        buffer.write_u16(self.seq, data);
         buffer.write_u8(self.packet_type as u8, data);
         buffer.write_u64(self.session_key, data);
-        buffer.write_u32(self.ack, data);
+        buffer.write_u16(self.ack, data);
         buffer.write_u32(self.ack_bits, data);
 
         if self.packet_type.is_frag_variant() {
@@ -70,7 +70,7 @@ impl Header {
                 bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
             }
 
-            buffer.write_u32(self.fragment_group_id, data);
+            buffer.write_u16(self.fragment_group_id, data);
             buffer.write_u8(self.fragment_id, data);
             buffer.write_u8(self.fragment_size, data);
         }
@@ -85,11 +85,11 @@ impl Header {
 
         let mut buffer = IntBuffer { index: 0 };
 
-        let seq = buffer.read_u32(data);
+        let seq = buffer.read_u16(data);
         let packet_type =
             PacketType::from_repr(buffer.read_u8(data)).ok_or(anyhow!("invalid packet type"))?;
         let session_key = buffer.read_u64(data);
-        let ack = buffer.read_u32(data);
+        let ack = buffer.read_u16(data);
         let ack_bits = buffer.read_u32(data);
 
         let mut fragment_group_id = 0;
@@ -101,7 +101,7 @@ impl Header {
                 bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
             }
 
-            fragment_group_id = buffer.read_u32(data);
+            fragment_group_id = buffer.read_u16(data);
             fragment_id = buffer.read_u8(data);
             fragment_size = buffer.read_u8(data);
 

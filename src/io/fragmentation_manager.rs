@@ -5,12 +5,12 @@ use anyhow::bail;
 use super::{
     header::{Header, SendType},
     send_buffer::SendPayload,
-    sequence_buffer::SequenceBuffer,
+    sequence::SequenceBuffer,
     BUFFER_SIZE, FRAGMENT_SIZE,
 };
 
 pub struct FragmentationManager {
-    fragment_group_seq: u32,
+    fragment_group_seq: u16,
     fragment_buffer: SequenceBuffer<ReceiveFragments>,
 }
 
@@ -18,7 +18,7 @@ impl FragmentationManager {
     pub fn new() -> Self {
         Self {
             fragment_group_seq: 0,
-            fragment_buffer: SequenceBuffer::with_capacity(BUFFER_SIZE),
+            fragment_buffer: SequenceBuffer::with_size(BUFFER_SIZE),
         }
     }
 
@@ -88,7 +88,7 @@ impl FragmentationManager {
         Ok(fragment.is_done())
     }
 
-    pub fn build_fragment(&self, group_id: u32) -> anyhow::Result<Option<Vec<u8>>> {
+    pub fn build_fragment(&self, group_id: u16) -> anyhow::Result<Option<Vec<u8>>> {
         if let Some(fragment) = self.fragment_buffer.get(group_id) {
             if fragment.is_done() {
                 let mut parts: Vec<u8> = Vec::with_capacity(fragment.current_bytes);
@@ -106,7 +106,7 @@ impl FragmentationManager {
 }
 
 pub struct ReceiveFragments {
-    pub group_id: u32,
+    pub group_id: u16,
     pub chunks: Vec<Option<Vec<u8>>>,
     pub size: u8,
     pub current_size: u8,
@@ -122,7 +122,7 @@ impl ReceiveFragments {
 pub struct Fragments<'a> {
     pub chunks: Vec<FragmentChunk<'a>>,
     pub chunk_count: u8,
-    pub group_id: u32,
+    pub group_id: u16,
 }
 
 pub struct FragmentChunk<'a> {
