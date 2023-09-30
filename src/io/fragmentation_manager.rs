@@ -1,4 +1,7 @@
-use std::rc::Rc;
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use anyhow::bail;
 
@@ -8,8 +11,11 @@ use super::{
     header::{Header, SendType},
     send_buffer::SendPayload,
     sequence::{SequenceBuffer, WindowSequenceBuffer},
-    BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE,
+    BUFFER_SIZE, BUFFER_WINDOW_SIZE,
 };
+
+const FRAGMENT_SIZE: usize = 1024;
+const GROUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct FragmentationManager {
     group_seq: u16,
@@ -73,8 +79,14 @@ impl FragmentationManager {
                     size: header.fragment_size,
                     current_size: 0,
                     current_bytes: 0,
+                    created_on: Instant::now(),
                 },
             );
+        }
+
+        if !self.validate_group(header.fragment_group_id) {
+            self.remove_fragment_group(header.fragment_group_id);
+            bail!("fragment has timed out")
         }
 
         //we can safely expect because we inserted the entry above
@@ -96,7 +108,13 @@ impl FragmentationManager {
         Ok(fragment.is_done())
     }
 
-    pub fn assemble(&self, group_id: u16) -> anyhow::Result<Option<Vec<u8>>> {
+    pub fn assemble(&mut self, group_id: u16) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut packet_data = None;
+
+        if !self.validate_group(group_id) {
+            self.remove_fragment_group(group_id);
+        }
+
         if let Some(fragment) = self.fragments.get(group_id) {
             if fragment.is_done() {
                 let mut parts: Vec<u8> = Vec::with_capacity(fragment.current_bytes);
@@ -105,11 +123,27 @@ impl FragmentationManager {
                     parts.extend(chunk);
                 }
 
-                return Ok(Some(parts));
+                packet_data = Some(parts);
             }
         }
 
-        Ok(None)
+        //remove the fragment group
+        if packet_data.is_some() {
+            self.fragments.remove(group_id);
+        }
+
+        Ok(packet_data)
+    }
+
+    fn validate_group(&self, group_id: u16) -> bool {
+        if let Some(fragment) = self.fragments.get(group_id) {
+            return fragment.created_on.elapsed() < GROUP_TIMEOUT;
+        }
+        false
+    }
+
+    fn remove_fragment_group(&mut self, group_id: u16) {
+        self.fragments.remove(group_id);
     }
 }
 
@@ -119,6 +153,7 @@ pub struct ReceiveFragments {
     pub size: u8,
     pub current_size: u8,
     pub current_bytes: usize,
+    pub created_on: Instant,
 }
 
 impl ReceiveFragments {
@@ -140,6 +175,8 @@ pub struct FragmentChunk<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use super::*;
 
     #[test]
@@ -168,6 +205,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(frag_data.len(), data.len() * u8::MAX as usize)
+    }
+
+    #[test]
+    fn fragment_group_timeout() {
+        let mut fragment_manager = FragmentationManager::new();
+        let mut header = Header {
+            seq: 0,
+            packet_type: crate::io::PacketType::PayloadReliable,
+            session_key: 0,
+            ack: 0,
+            ack_bits: 0,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: 2,
+        };
+        let data = vec![1, 2, 3];
+
+        fragment_manager.insert_fragment(&header, &data).unwrap();
+        header.fragment_id += 1;
+
+        //sleep for longer than the group timeout
+        thread::sleep(GROUP_TIMEOUT + Duration::from_millis(250));
+
+        assert!(fragment_manager.insert_fragment(&header, &data).is_err());
+        //check the fragment group was removed
+        assert!(fragment_manager.fragments.is_none(header.fragment_group_id));
     }
 
     #[test]

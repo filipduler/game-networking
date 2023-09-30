@@ -22,7 +22,6 @@ pub const BUFFER_SIZE: u16 = 1024;
 pub const BUFFER_WINDOW_SIZE: u16 = 256;
 
 pub const RESEND_DURATION: Duration = Duration::from_millis(100);
-pub const FRAGMENT_SIZE: usize = 1150;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, FromRepr)]

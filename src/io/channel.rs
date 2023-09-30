@@ -9,8 +9,7 @@ use super::{
     send_buffer::{SendBufferManager, SendPayload},
     sequence::{Sequence, SequenceBuffer, WindowSequenceBuffer},
     socket::UdpSendEvent,
-    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE, MAGIC_NUMBER_HEADER,
-    RESEND_DURATION,
+    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER, RESEND_DURATION,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
