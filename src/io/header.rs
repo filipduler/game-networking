@@ -7,6 +7,7 @@ use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 pub const HEADER_SIZE: usize = 15;
 pub const FRAG_HEADER_SIZE: usize = 21;
 
+#[derive(PartialEq, Eq)]
 pub enum SendType {
     Reliable,
     Unreliable,

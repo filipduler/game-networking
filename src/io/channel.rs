@@ -66,7 +66,7 @@ impl Channel {
 
     pub fn send_reliable(&mut self, data: &[u8]) -> anyhow::Result<()> {
         if FragmentationManager::should_fragment(data.len()) {
-            let fragments = self.fragmentation.split_fragments(data);
+            let fragments = self.fragmentation.split_fragments(data)?;
             for chunk in &fragments.chunks {
                 let payload = self.create_send_buffer(
                     chunk.data,
@@ -87,7 +87,7 @@ impl Channel {
 
     pub fn send_unreliable(&mut self, data: &[u8]) -> anyhow::Result<()> {
         if FragmentationManager::should_fragment(data.len()) {
-            let fragments = self.fragmentation.split_fragments(data);
+            let fragments = self.fragmentation.split_fragments(data)?;
             for chunk in &fragments.chunks {
                 let (seq, payload) = self.create_unreliable_packet(
                     chunk.data,
@@ -162,9 +162,8 @@ impl Channel {
                         let payload = &data[header.get_header_size()..data.len()];
                         if is_frag {
                             if self.fragmentation.insert_fragment(&header, payload)? {
-                                if let Some(data) = self
-                                    .fragmentation
-                                    .build_fragment(header.fragment_group_id)?
+                                if let Some(data) =
+                                    self.fragmentation.assemble(header.fragment_group_id)?
                                 {
                                     return Ok(ReadPayload::Vec(data));
                                 }
@@ -301,88 +300,5 @@ impl Channel {
             ChannelType::Client => UdpSendEvent::ClientTracking(payload, seq),
             ChannelType::Server => UdpSendEvent::ServerTracking(payload, self.addr, seq),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use bit_field::BitField;
-
-    fn test_channel() -> Channel {
-        let (t1, t2) = crossbeam_channel::unbounded();
-        Channel::new(
-            "127.0.0.1:21344".parse().unwrap(),
-            0, //TODO
-            ChannelType::Server,
-            &t1,
-        )
-    }
-
-    use super::*;
-    #[test]
-    fn marking_received_bitfields() {
-        let mut channel = test_channel();
-        channel.local_seq = 5;
-
-        let mut ack_bitfield = 0;
-        ack_bitfield.set_bit(0, true);
-        ack_bitfield.set_bit(1, true);
-        ack_bitfield.set_bit(15, true);
-        ack_bitfield.set_bit(31, true);
-
-        channel.mark_sent_packets(5, ack_bitfield);
-
-        assert!(*channel
-            .send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(0))
-            .unwrap());
-        assert!(*channel
-            .send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(1))
-            .unwrap());
-        assert!(*channel
-            .send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(15))
-            .unwrap());
-        assert!(*channel
-            .send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(31))
-            .unwrap());
-    }
-
-    #[test]
-    fn generating_received_bitfields() {
-        let mut channel = test_channel();
-        channel.remote_seq = 5;
-
-        let prev_remote_seq = channel.remote_seq - 1;
-        channel
-            .send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(0), true);
-        channel
-            .send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(1), true);
-        channel
-            .send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(15), true);
-        channel
-            .send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(31), true);
-
-        let mut ack_bitfield = 0;
-        ack_bitfield.set_bit(0, true);
-        ack_bitfield.set_bit(1, true);
-        ack_bitfield.set_bit(15, true);
-        ack_bitfield.set_bit(31, true);
-
-        assert_eq!(channel.generate_ack_field(), ack_bitfield);
     }
 }

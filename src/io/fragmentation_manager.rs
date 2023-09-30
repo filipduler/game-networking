@@ -2,23 +2,25 @@ use std::rc::Rc;
 
 use anyhow::bail;
 
+use crate::io::sequence::Sequence;
+
 use super::{
     header::{Header, SendType},
     send_buffer::SendPayload,
-    sequence::SequenceBuffer,
-    BUFFER_SIZE, FRAGMENT_SIZE,
+    sequence::{SequenceBuffer, WindowSequenceBuffer},
+    BUFFER_SIZE, BUFFER_WINDOW_SIZE, FRAGMENT_SIZE,
 };
 
 pub struct FragmentationManager {
-    fragment_group_seq: u16,
-    fragment_buffer: SequenceBuffer<ReceiveFragments>,
+    group_seq: u16,
+    fragments: WindowSequenceBuffer<ReceiveFragments>,
 }
 
 impl FragmentationManager {
     pub fn new() -> Self {
         Self {
-            fragment_group_seq: 0,
-            fragment_buffer: SequenceBuffer::with_size(BUFFER_SIZE),
+            group_seq: 0,
+            fragments: WindowSequenceBuffer::with_size(BUFFER_SIZE, BUFFER_WINDOW_SIZE),
         }
     }
 
@@ -26,38 +28,44 @@ impl FragmentationManager {
         length > FRAGMENT_SIZE
     }
 
-    pub fn split_fragments<'a>(&mut self, data: &'a [u8]) -> Fragments<'a> {
+    pub fn split_fragments<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<Fragments<'a>> {
+        if data.len() as f32 / FRAGMENT_SIZE as f32 > u8::MAX as f32 {
+            bail!("there cannot be more than 255 packets")
+        }
         let chunks = data.chunks(FRAGMENT_SIZE);
-        assert!(
-            chunks.len() <= u8::MAX as usize,
-            "there cannot be more than 255 packets"
-        );
 
-        let mut fragment_id: u8 = 0;
         let chunk_count = chunks.len() as u8;
 
         let mut fragments = Fragments {
             chunk_count,
-            group_id: self.fragment_group_seq,
+            group_id: self.group_seq,
             chunks: Vec::with_capacity(chunks.len()),
         };
 
-        for chunk in chunks {
+        for (fragment_id, chunk) in (0_u8..u8::MAX).zip(chunks) {
             fragments.chunks.push(FragmentChunk {
                 data: chunk,
                 fragment_id,
             });
-            fragment_id += 1;
         }
-        self.fragment_group_seq += 1;
 
-        fragments
+        Sequence::increment(&mut self.group_seq);
+
+        Ok(fragments)
     }
 
     pub fn insert_fragment(&mut self, header: &Header, data: &[u8]) -> anyhow::Result<bool> {
+        if header.fragment_id >= header.fragment_size {
+            bail!("fragment id cannot be larger than the fragment size")
+        }
+
+        if header.fragment_size == 0 {
+            bail!("empty fragment with size 0")
+        }
+
         //insert the fragment buffer if it doesnt exist yet
-        if self.fragment_buffer.is_none(header.fragment_group_id) {
-            self.fragment_buffer.insert(
+        if self.fragments.is_none(header.fragment_group_id) {
+            self.fragments.insert(
                 header.fragment_group_id,
                 ReceiveFragments {
                     group_id: header.fragment_group_id,
@@ -71,12 +79,12 @@ impl FragmentationManager {
 
         //we can safely expect because we inserted the entry above
         let mut fragment = self
-            .fragment_buffer
+            .fragments
             .get_mut(header.fragment_group_id)
             .expect("fragment not set in the buffer");
 
-        if header.fragment_id >= fragment.size {
-            bail!("fragment id cannot be larger than the fragment size")
+        if header.fragment_size != fragment.size {
+            bail!("fragment sizes do not match")
         }
 
         if fragment.chunks[header.fragment_id as usize].is_none() {
@@ -88,8 +96,8 @@ impl FragmentationManager {
         Ok(fragment.is_done())
     }
 
-    pub fn build_fragment(&self, group_id: u16) -> anyhow::Result<Option<Vec<u8>>> {
-        if let Some(fragment) = self.fragment_buffer.get(group_id) {
+    pub fn assemble(&self, group_id: u16) -> anyhow::Result<Option<Vec<u8>>> {
+        if let Some(fragment) = self.fragments.get(group_id) {
             if fragment.is_done() {
                 let mut parts: Vec<u8> = Vec::with_capacity(fragment.current_bytes);
                 for i in 0..fragment.size {
@@ -128,4 +136,104 @@ pub struct Fragments<'a> {
 pub struct FragmentChunk<'a> {
     pub data: &'a [u8],
     pub fragment_id: u8,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_fragment_insert_and_build() {
+        let mut fragment_manager = FragmentationManager::new();
+        let mut header = Header {
+            seq: 0,
+            packet_type: crate::io::PacketType::PayloadReliable,
+            session_key: 0,
+            ack: 0,
+            ack_bits: 0,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: u8::MAX,
+        };
+        let data = vec![1, 2, 3];
+
+        for i in 0..u8::MAX {
+            let status = fragment_manager.insert_fragment(&header, &data).unwrap();
+            header.fragment_id += 1;
+            assert_eq!(status, i == u8::MAX - 1);
+        }
+
+        let frag_data = fragment_manager
+            .assemble(header.fragment_group_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(frag_data.len(), data.len() * u8::MAX as usize)
+    }
+
+    #[test]
+    fn insert_duplicate_packet() {
+        let mut fragment_manager = FragmentationManager::new();
+        let mut header = Header {
+            seq: 0,
+            packet_type: crate::io::PacketType::PayloadReliable,
+            session_key: 0,
+            ack: 0,
+            ack_bits: 0,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: u8::MAX,
+        };
+        let data = vec![1, 2, 3];
+
+        fragment_manager.insert_fragment(&header, &data).unwrap();
+        fragment_manager.insert_fragment(&header, &data).unwrap();
+
+        let frag = fragment_manager
+            .fragments
+            .get(header.fragment_group_id)
+            .unwrap();
+        assert_eq!(frag.current_bytes, 3);
+        assert_eq!(frag.current_size, 1);
+    }
+
+    #[test]
+    fn insert_different_fragment_sizes() {
+        let mut fragment_manager = FragmentationManager::new();
+        let mut header = Header {
+            seq: 0,
+            packet_type: crate::io::PacketType::PayloadReliable,
+            session_key: 0,
+            ack: 0,
+            ack_bits: 0,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: u8::MAX,
+        };
+        let data = vec![1, 2, 3];
+
+        fragment_manager.insert_fragment(&header, &data).unwrap();
+        header.fragment_id += 1;
+
+        //change the fragment size, this should throw an error
+        header.fragment_size -= 1;
+
+        assert!(fragment_manager.insert_fragment(&header, &data).is_err());
+    }
+
+    #[test]
+    fn max_packet_size() {
+        let mut fragment_manager = FragmentationManager::new();
+        let data = [0_u8; u8::MAX as usize * FRAGMENT_SIZE];
+        let frags_result = fragment_manager.split_fragments(&data);
+        assert!(frags_result.is_ok());
+
+        assert_eq!(frags_result.unwrap().chunk_count, u8::MAX);
+    }
+
+    #[test]
+    fn too_big_packet() {
+        let mut fragment_manager = FragmentationManager::new();
+        let data = [0_u8; u8::MAX as usize * FRAGMENT_SIZE + 1];
+        assert!(fragment_manager.split_fragments(&data).is_err());
+    }
 }
