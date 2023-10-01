@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use strum_macros::FromRepr;
 
+mod array_pool;
 pub mod channel;
 pub mod client;
 pub mod client_process;

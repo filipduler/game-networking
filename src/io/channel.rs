@@ -110,8 +110,7 @@ impl Channel {
 
         let (seq, payload) = self.create_unreliable_packet(empty_arr, false, 0, 0, 0);
 
-        self.sender
-            .send(self.make_send_event(seq, payload.to_vec()))?;
+        self.send(seq, &payload)?;
 
         Ok(())
     }
@@ -296,8 +295,8 @@ impl Channel {
 
     fn make_send_event(&self, seq: u16, payload: Vec<u8>) -> UdpSendEvent {
         match self.mode {
-            ChannelType::Client => UdpSendEvent::ClientTracking(payload, seq),
-            ChannelType::Server => UdpSendEvent::ServerTracking(payload, self.addr, seq),
+            ChannelType::Client => UdpSendEvent::Client(payload, seq),
+            ChannelType::Server => UdpSendEvent::Server(payload, self.addr, seq),
         }
     }
 }

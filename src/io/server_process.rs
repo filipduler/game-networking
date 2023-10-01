@@ -2,14 +2,17 @@ use std::{
     collections::HashMap,
     error, io,
     net::SocketAddr,
+    sync::Arc,
     thread::{self},
     time::Duration,
 };
 
+use anyhow::bail;
 use crossbeam_channel::{select, Receiver, Sender};
 use log::error;
 
 use super::{
+    array_pool::ArrayPool,
     channel::ReadPayload,
     connection::ConnectionManager,
     header::SendType,
@@ -32,6 +35,7 @@ pub struct ServerProcess {
     recv_rx: Receiver<UdpEvent>,
     //connections
     connection_manager: ConnectionManager,
+    array_pool: Arc<ArrayPool>,
 }
 
 impl ServerProcess {
@@ -40,12 +44,15 @@ impl ServerProcess {
         max_clients: usize,
         out_events: Sender<ServerEvent>,
         in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
-    ) -> std::io::Result<Self> {
+    ) -> anyhow::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
+        let array_pool = Arc::new(ArrayPool::new());
 
+        let c_array_pool = array_pool.clone();
         thread::spawn(move || {
-            if let Err(e) = run_udp_socket(addr, None, send_rx, recv_tx) {
+            let array_pool = Arc::new(ArrayPool::new());
+            if let Err(e) = run_udp_socket(addr, None, send_rx, recv_tx, c_array_pool) {
                 error!("error while running udp server: {}", e)
             }
         });
@@ -54,7 +61,7 @@ impl ServerProcess {
             Ok(UdpEvent::Start) => {
                 out_events.send(ServerEvent::Start).unwrap();
             }
-            _ => panic!("failed waiting for start event"),
+            _ => bail!("failed waiting for start event"),
         };
 
         Ok(Self {
@@ -63,6 +70,7 @@ impl ServerProcess {
             out_events,
             send_tx,
             recv_rx,
+            array_pool,
         })
     }
 
@@ -81,11 +89,14 @@ impl ServerProcess {
                 //incoming read packets
                 recv(self.recv_rx) -> msg_result => {
                     match msg_result {
-                        Ok(UdpEvent::Read(addr, data)) => {
-                            self.process_read_request(
+                        Ok(UdpEvent::Read(addr, length, data)) => {
+                            if let Err(ref e) = self.process_read_request(
                                 addr,
-                                &data,
-                            );
+                                &data[..length],
+                            ) {
+                                error!("failed processing read request: {e}");
+                            };
+                            self.array_pool.free(data);
                         },
                         Ok(UdpEvent::SentServer(addr, seq, sent_at)) => {
                             if let Some(conn) = self.connection_manager.get_client_mut(&addr) {
@@ -99,12 +110,14 @@ impl ServerProcess {
                 },
                 //send requests coming fron the API
                 recv(self.in_sends) -> msg_result => {
-                    let msg = msg_result.unwrap();
-                    self.process_send_request(
-                        msg.0,
-                        msg.1,
-                        msg.2
-                    );
+                    match msg_result {
+                        Ok(msg) => self.process_send_request(
+                            msg.0,
+                            msg.1,
+                            msg.2
+                        ),
+                        Err(e) => panic!("panic reading udp event {}", e),
+                    };
                 }
             }
         }

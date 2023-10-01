@@ -1,9 +1,10 @@
-use std::{io, net::SocketAddr, thread, time::Duration};
+use std::{io, net::SocketAddr, sync::Arc, thread, time::Duration};
 
 use crossbeam_channel::{Receiver, Sender};
 use log::error;
 
 use super::{
+    array_pool::ArrayPool,
     header::SendType,
     server_process::{ServerEvent, ServerProcess},
 };

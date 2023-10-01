@@ -18,12 +18,15 @@ fn generate_random_u8_vector(length: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use crate::io::{client::Client, header::SendType, server::Server};
 
     use super::*;
 
     #[test]
     fn it_works() {
+        env::set_var("RUST_LOG", "INFO");
         env_logger::init();
 
         let client_addr = "127.0.0.1:9091".parse().unwrap();

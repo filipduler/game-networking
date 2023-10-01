@@ -18,8 +18,7 @@ pub fn try_login(
     let client_salt = rand::thread_rng().gen();
 
     //wait for start
-    let event = reciever.recv_timeout(timeout)?;
-    if event != UdpEvent::Start {
+    if reciever.recv_timeout(timeout)? != UdpEvent::Start {
         bail!("expected start event");
     }
 
@@ -57,43 +56,46 @@ fn read_challange(
     reciever: &Receiver<UdpEvent>,
     timeout: Duration,
 ) -> anyhow::Result<u64> {
-    let data = if let UdpEvent::Read(_, data) = reciever.recv_timeout(timeout)? {
-        data
+    //TODO: free data back to the array pool.. maybe wrap the read in some function with a callback
+    let (length, data) = if let UdpEvent::Read(_, length, data) = reciever.recv_timeout(timeout)? {
+        (length, data)
     } else {
         bail!("unexpected event");
     };
+    let data = &data[..length];
 
     let mut buffer = IntBuffer { index: 0 };
-    let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(&data)) {
+    let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
         state
     } else {
         bail!("invalid connection state in header");
     };
 
-    if client_salt != buffer.read_u64(&data) {
+    if client_salt != buffer.read_u64(data) {
         bail!("invalid client salt");
     }
-    let server_salt = buffer.read_u64(&data);
+    let server_salt = buffer.read_u64(data);
 
     Ok(server_salt)
 }
 
 fn read_connection_status(reciever: &Receiver<UdpEvent>, timeout: Duration) -> anyhow::Result<u32> {
-    let data = if let UdpEvent::Read(_, data) = reciever.recv_timeout(timeout)? {
-        data
+    let (length, data) = if let UdpEvent::Read(_, length, data) = reciever.recv_timeout(timeout)? {
+        (length, data)
     } else {
         bail!("unexpected event");
     };
+    let data = &data[..length];
 
     let mut buffer = IntBuffer { index: 0 };
-    let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(&data)) {
+    let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
         state
     } else {
         bail!("invalid connection state in header");
     };
 
     if state == PacketType::ConnectionAccepted {
-        return Ok(buffer.read_u32(&data));
+        return Ok(buffer.read_u32(data));
     }
 
     bail!("connection not accepted");

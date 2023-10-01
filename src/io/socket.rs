@@ -5,23 +5,26 @@ use mio::{Events, Interest, Poll, Token};
 use std::borrow::BorrowMut;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::io::MAGIC_NUMBER_HEADER;
+
+use super::array_pool::ArrayPool;
 
 #[derive(PartialEq, Eq)]
 pub enum UdpEvent {
     Start,
     SentServer(SocketAddr, u16, Instant),
     SentClient(u16, Instant),
-    Read(SocketAddr, Vec<u8>),
+    Read(SocketAddr, usize, Vec<u8>),
 }
 
 #[derive(Clone)]
 pub enum UdpSendEvent {
-    ServerTracking(Vec<u8>, SocketAddr, u16),
+    Server(Vec<u8>, SocketAddr, u16),
     ServerNonTracking(Vec<u8>, SocketAddr),
-    ClientTracking(Vec<u8>, u16),
+    Client(Vec<u8>, u16),
     ClientNonTracking(Vec<u8>),
 }
 
@@ -33,6 +36,7 @@ pub fn run_udp_socket(
     remote_addr_opt: Option<SocketAddr>,
     send_receiver: Receiver<UdpSendEvent>,
     event_sender: Sender<UdpEvent>,
+    array_pool: Arc<ArrayPool>,
 ) -> anyhow::Result<()> {
     let mut poll = Poll::new()?;
     let mut events = Events::with_capacity(1);
@@ -95,23 +99,25 @@ pub fn run_udp_socket(
                             };
 
                             let send_result = match data {
-                                UdpSendEvent::ServerTracking(ref data, addr, _) => {
+                                UdpSendEvent::Server(ref data, addr, _) => {
                                     socket.send_to(data, addr)
                                 }
                                 UdpSendEvent::ServerNonTracking(ref data, addr) => {
                                     socket.send_to(data, addr)
                                 }
-                                UdpSendEvent::ClientTracking(ref data, _) => socket.send(data),
+                                UdpSendEvent::Client(ref data, _) => socket.send(data),
                                 UdpSendEvent::ClientNonTracking(ref data) => socket.send(data),
                             };
 
                             match send_result {
-                                Ok(_) => {
+                                Ok(length) => {
+                                    info!("sent packet of size {length} on {local_addr}");
+
                                     let event = match data {
-                                        UdpSendEvent::ServerTracking(_, addr, seq) => {
+                                        UdpSendEvent::Server(_, addr, seq) => {
                                             Some(UdpEvent::SentServer(addr, seq, Instant::now()))
                                         }
-                                        UdpSendEvent::ClientTracking(_, seq) => {
+                                        UdpSendEvent::Client(_, seq) => {
                                             Some(UdpEvent::SentClient(seq, Instant::now()))
                                         }
                                         _ => None,
@@ -148,9 +154,20 @@ pub fn run_udp_socket(
                             match socket.recv_from(&mut buf) {
                                 Ok((packet_size, source_address)) => {
                                     if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
+                                        info!(
+                                            "received packet of size {packet_size} on {local_addr}"
+                                        );
+                                        let data_size = packet_size - 4;
+                                        let mut pooled_vec = array_pool.rent(data_size);
+
+                                        //copy the data
+                                        pooled_vec[..data_size]
+                                            .copy_from_slice(&buf[4..packet_size]);
+
                                         event_sender.send(UdpEvent::Read(
                                             source_address,
-                                            buf[4..packet_size].to_vec(),
+                                            data_size,
+                                            pooled_vec,
                                         ))?;
                                     }
                                 }
