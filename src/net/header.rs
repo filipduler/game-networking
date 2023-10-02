@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail};
 
-use crate::io::PacketType;
+use crate::net::PacketType;
 
 use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
@@ -125,7 +125,7 @@ impl Header {
     }
 
     pub fn create_packet(&self, data: Option<&[u8]>) -> Vec<u8> {
-        let mut buffer = IntBuffer { index: 0 };
+        let mut buffer = IntBuffer::new_at(0);
 
         let header_size = self.get_header_size();
 
@@ -148,5 +148,10 @@ impl Header {
         } else {
             HEADER_SIZE
         }
+    }
+
+    #[inline]
+    pub fn max_header_size() -> usize {
+        FRAG_HEADER_SIZE
     }
 }

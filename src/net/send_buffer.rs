@@ -2,7 +2,7 @@ use std::{rc::Rc, time::Instant};
 
 use bit_field::BitField;
 
-use crate::io::{sequence::SequenceBuffer, BUFFER_SIZE};
+use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
 pub struct SendBuffer {
     pub payload: Rc<SendPayload>,

@@ -16,7 +16,7 @@ use rand::Rng;
 use super::{
     array_pool::ArrayPool,
     channel::{Channel, ChannelType, ReadPayload},
-    connection,
+    connections,
     header::SendType,
     int_buffer::IntBuffer,
     socket::{run_udp_socket, UdpEvent, UdpSendEvent},
@@ -64,7 +64,7 @@ impl ClientProcess {
         });
 
         let (session_key, client_id) =
-            connection::try_login(&recv_rx, &send_tx).expect("login failed");
+            connections::try_login(&recv_rx, &send_tx).expect("login failed");
 
         out_events.send(ClientEvent::Connect(client_id))?;
 

@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crossbeam_channel::Sender;
 
-use crate::io::{
+use crate::net::{
     channel::{Channel, ChannelType},
     header::{Header, SendType},
     socket::UdpSendEvent,
@@ -10,14 +10,14 @@ use crate::io::{
 
 use super::identity::Identity;
 
-pub struct Client {
+pub struct Connection {
     pub identity: Identity,
     pub channel: Channel,
     pub received_at: Instant,
     pub last_received: Instant,
 }
 
-impl Client {
+impl Connection {
     pub fn new(identity: Identity, sender: &Sender<UdpSendEvent>) -> Self {
         Self {
             channel: Channel::new(

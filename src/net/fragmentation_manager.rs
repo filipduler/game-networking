@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::bail;
 
-use crate::io::sequence::Sequence;
+use crate::net::sequence::Sequence;
 
 use super::{
     header::{Header, SendType},
@@ -15,6 +15,7 @@ use super::{
 };
 
 const FRAGMENT_SIZE: usize = 1024;
+const MAX_FRAGMENT_SIZE: usize = FRAGMENT_SIZE * u8::MAX as usize;
 const GROUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct FragmentationManager {
@@ -145,6 +146,10 @@ impl FragmentationManager {
     fn remove_fragment_group(&mut self, group_id: u16) {
         self.fragments.remove(group_id);
     }
+
+    pub fn exceeds_max_length(length: usize) -> bool {
+        MAX_FRAGMENT_SIZE < length
+    }
 }
 
 pub struct ReceiveFragments {
@@ -184,7 +189,7 @@ mod tests {
         let mut fragment_manager = FragmentationManager::new();
         let mut header = Header {
             seq: 0,
-            packet_type: crate::io::PacketType::PayloadReliable,
+            packet_type: crate::net::PacketType::PayloadReliable,
             session_key: 0,
             ack: 0,
             ack_bits: 0,
@@ -212,7 +217,7 @@ mod tests {
         let mut fragment_manager = FragmentationManager::new();
         let mut header = Header {
             seq: 0,
-            packet_type: crate::io::PacketType::PayloadReliable,
+            packet_type: crate::net::PacketType::PayloadReliable,
             session_key: 0,
             ack: 0,
             ack_bits: 0,
@@ -238,7 +243,7 @@ mod tests {
         let mut fragment_manager = FragmentationManager::new();
         let mut header = Header {
             seq: 0,
-            packet_type: crate::io::PacketType::PayloadReliable,
+            packet_type: crate::net::PacketType::PayloadReliable,
             session_key: 0,
             ack: 0,
             ack_bits: 0,
@@ -264,7 +269,7 @@ mod tests {
         let mut fragment_manager = FragmentationManager::new();
         let mut header = Header {
             seq: 0,
-            packet_type: crate::io::PacketType::PayloadReliable,
+            packet_type: crate::net::PacketType::PayloadReliable,
             session_key: 0,
             ack: 0,
             ack_bits: 0,
@@ -285,8 +290,8 @@ mod tests {
 
     #[test]
     fn max_packet_size() {
-        let mut fragment_manager = FragmentationManager::new();
-        let data = [0_u8; u8::MAX as usize * FRAGMENT_SIZE];
+        let mut fragment_manager: FragmentationManager = FragmentationManager::new();
+        let data = [0_u8; MAX_FRAGMENT_SIZE];
         let frags_result = fragment_manager.split_fragments(&data);
         assert!(frags_result.is_ok());
 
@@ -296,7 +301,7 @@ mod tests {
     #[test]
     fn too_big_packet() {
         let mut fragment_manager = FragmentationManager::new();
-        let data = [0_u8; u8::MAX as usize * FRAGMENT_SIZE + 1];
+        let data = [0_u8; MAX_FRAGMENT_SIZE + 1];
         assert!(fragment_manager.split_fragments(&data).is_err());
     }
 }

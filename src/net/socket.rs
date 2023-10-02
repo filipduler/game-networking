@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::io::MAGIC_NUMBER_HEADER;
+use crate::net::MAGIC_NUMBER_HEADER;
 
 use super::array_pool::ArrayPool;
 

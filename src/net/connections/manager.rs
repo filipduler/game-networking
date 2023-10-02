@@ -3,14 +3,14 @@ use std::{borrow::BorrowMut, collections::HashMap, net::SocketAddr};
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
-use crate::io::{int_buffer::IntBuffer, socket::UdpSendEvent, PacketType, MAGIC_NUMBER_HEADER};
+use crate::net::{int_buffer::IntBuffer, socket::UdpSendEvent, PacketType, MAGIC_NUMBER_HEADER};
 
-use super::{client::Client, identity::Identity};
+use super::{identity::Identity, Connection};
 
 pub struct ConnectionManager {
     capacity: usize,
     active_clients: usize,
-    connections: Vec<Option<Client>>,
+    connections: Vec<Option<Connection>>,
     addr_map: HashMap<SocketAddr, usize>,
     connect_requests: HashMap<SocketAddr, Identity>,
     sender: Sender<UdpSendEvent>,
@@ -28,7 +28,7 @@ impl ConnectionManager {
         }
     }
 
-    pub fn get_client_mut(&mut self, addr: &SocketAddr) -> Option<&mut Client> {
+    pub fn get_client_mut(&mut self, addr: &SocketAddr) -> Option<&mut Connection> {
         if let Some(connection_index) = self.addr_map.get(addr) {
             if let Some(Some(client_opt)) = self.connections.get_mut(*connection_index) {
                 return Some(client_opt);
@@ -95,7 +95,7 @@ impl ConnectionManager {
                 buffer.write_u32(identity.id, &mut payload);
 
                 //insert the client
-                self.insert_client(connection_index, &identity);
+                self.insert_connection(connection_index, &identity);
 
                 return Some(payload);
             }
@@ -110,14 +110,14 @@ impl ConnectionManager {
         }
     }
 
-    fn insert_client(&mut self, index: usize, identity: &Identity) {
+    fn insert_connection(&mut self, index: usize, identity: &Identity) {
         self.connections
-            .insert(index, Some(Client::new(identity.clone(), &self.sender)));
+            .insert(index, Some(Connection::new(identity.clone(), &self.sender)));
         self.addr_map.insert(identity.addr, index);
         self.active_clients += 1;
     }
 
-    pub fn disconnect_client(&mut self, addr: SocketAddr) {
+    pub fn disconnect_connection(&mut self, addr: SocketAddr) {
         if let Some(index) = self.addr_map.get(&addr).cloned() {
             let slot = &self.connections[index];
             if slot.is_some() {

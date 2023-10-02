@@ -2,7 +2,7 @@
 
 use rand::Rng;
 
-mod io;
+mod net;
 
 fn generate_random_u8_vector(length: usize) -> Vec<u8> {
     let mut rng = rand::thread_rng();
@@ -20,7 +20,7 @@ fn generate_random_u8_vector(length: usize) -> Vec<u8> {
 mod tests {
     use std::env;
 
-    use crate::io::{client::Client, header::SendType, server::Server};
+    use crate::net::{client::Client, header::SendType, server::Server};
 
     use super::*;
 

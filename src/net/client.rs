@@ -1,10 +1,12 @@
 use std::{io, net::SocketAddr, thread, time::Duration};
 
+use anyhow::bail;
 use crossbeam_channel::{Receiver, Sender};
 use log::error;
 
 use super::{
     client_process::{ClientEvent, ClientProcess},
+    fragmentation_manager::FragmentationManager,
     header::SendType,
 };
 
@@ -42,17 +44,19 @@ impl Client {
     }
 
     pub fn send(&self, data: &[u8], send_type: SendType) -> anyhow::Result<()> {
+        if FragmentationManager::exceeds_max_length(data.len()) {
+            bail!("packets of this size arent supported");
+        }
+
         self.in_sends.send((data.to_vec(), send_type))?;
         Ok(())
     }
 
-    pub fn read(&mut self) -> anyhow::Result<Vec<u8>> {
-        loop {
-            match self.out_events.recv() {
-                Ok(ClientEvent::Receive(data)) => return Ok(data),
-                Err(e) => panic!("error receiving {e}"),
-                _ => panic!("unexpected event"),
-            }
+    pub fn read(&self) -> anyhow::Result<Vec<u8>> {
+        match self.out_events.recv() {
+            Ok(ClientEvent::Receive(data)) => Ok(data),
+            Err(e) => panic!("error receiving {e}"),
+            _ => panic!("unexpected event"),
         }
     }
 }

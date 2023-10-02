@@ -3,6 +3,10 @@ pub struct IntBuffer {
 }
 
 impl IntBuffer {
+    pub fn new_at(index: usize) -> Self {
+        Self { index }
+    }
+
     #[inline]
     pub fn write_slice(&mut self, v: &[u8], data: &mut [u8]) {
         data[self.index..self.index + v.len()].copy_from_slice(v);

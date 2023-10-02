@@ -6,7 +6,7 @@ mod array_pool;
 pub mod channel;
 pub mod client;
 pub mod client_process;
-mod connection;
+mod connections;
 mod fragmentation_manager;
 pub mod header;
 mod int_buffer;

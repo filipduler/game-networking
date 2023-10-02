@@ -1,10 +1,12 @@
 use std::{io, net::SocketAddr, sync::Arc, thread, time::Duration};
 
+use anyhow::bail;
 use crossbeam_channel::{Receiver, Sender};
 use log::error;
 
 use super::{
     array_pool::ArrayPool,
+    fragmentation_manager::FragmentationManager,
     header::SendType,
     server_process::{ServerEvent, ServerProcess},
 };
@@ -43,11 +45,14 @@ impl Server {
     }
 
     pub fn send(&self, addr: SocketAddr, data: &[u8], send_type: SendType) -> anyhow::Result<()> {
+        if FragmentationManager::exceeds_max_length(data.len()) {
+            bail!("packets of this size arent supported");
+        }
         self.in_sends.send((addr, data.to_vec(), send_type))?;
         Ok(())
     }
 
-    pub fn read(&self) -> ServerEvent {
-        self.out_events.recv().unwrap()
+    pub fn read(&self) -> anyhow::Result<ServerEvent> {
+        Ok(self.out_events.recv()?)
     }
 }

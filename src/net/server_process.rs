@@ -14,7 +14,7 @@ use log::error;
 use super::{
     array_pool::ArrayPool,
     channel::ReadPayload,
-    connection::ConnectionManager,
+    connections::ConnectionManager,
     header::SendType,
     socket::{run_udp_socket, UdpEvent, UdpSendEvent},
 };
@@ -152,7 +152,7 @@ impl ServerProcess {
 
         //disconnect the client
         if let Some(addr) = disconnect_client_addr {
-            self.connection_manager.disconnect_client(addr);
+            self.connection_manager.disconnect_connection(addr);
         }
 
         Ok(())

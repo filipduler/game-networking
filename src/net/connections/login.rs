@@ -4,7 +4,7 @@ use anyhow::bail;
 use crossbeam_channel::{Receiver, Sender};
 use rand::Rng;
 
-use crate::io::{
+use crate::net::{
     int_buffer::IntBuffer,
     socket::{UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
