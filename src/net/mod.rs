@@ -10,6 +10,7 @@ mod connections;
 mod fragmentation_manager;
 pub mod header;
 mod int_buffer;
+mod packets;
 mod send_buffer;
 mod sequence;
 pub mod server;

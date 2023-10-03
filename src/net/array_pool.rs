@@ -18,11 +18,14 @@ impl ArrayPool {
 
     pub fn rent(&self, size: usize) -> Vec<u8> {
         let rounded_size = ArrayPool::round_up_to_multiple_of_step(size);
-        let mut pool_map = self.pool.lock();
 
-        if let Some(pool) = pool_map.get_mut(&rounded_size) {
-            if let Some(data) = pool.pop_front() {
-                return data;
+        {
+            let mut pool_map = self.pool.lock();
+
+            if let Some(pool) = pool_map.get_mut(&rounded_size) {
+                if let Some(data) = pool.pop_front() {
+                    return data;
+                }
             }
         }
 
@@ -47,6 +50,12 @@ impl ArrayPool {
             queue.push_back(data);
             pool_map.insert(rounded_size, queue);
         }
+    }
+
+    pub fn clone_pooled_vec(&mut self, data: &[u8]) -> Vec<u8> {
+        let mut dest = self.rent(data.len());
+        dest[..data.len()].copy_from_slice(data);
+        dest
     }
 
     fn round_up_to_multiple_of_step(num: usize) -> usize {

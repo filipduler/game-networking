@@ -1,27 +1,32 @@
-use std::{io, net::SocketAddr, thread, time::Duration};
+use std::{io, net::SocketAddr, sync::Arc, thread, time::Duration};
 
 use anyhow::bail;
 use crossbeam_channel::{Receiver, Sender};
 use log::error;
 
 use super::{
+    array_pool::ArrayPool,
     client_process::{ClientEvent, ClientProcess},
     fragmentation_manager::FragmentationManager,
     header::SendType,
+    packets::{self, SendEvent},
 };
 
 pub struct Client {
-    in_sends: Sender<(Vec<u8>, SendType)>,
+    in_sends: Sender<(SendEvent, SendType)>,
     out_events: Receiver<ClientEvent>,
+    array_pool: Arc<ArrayPool>,
 }
 
 impl Client {
     pub fn connect(local_addr: SocketAddr, remote_addr: SocketAddr) -> io::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
+        let array_pool = Arc::new(ArrayPool::new());
 
+        let c_array_pool = array_pool.clone();
         thread::spawn(move || {
-            match ClientProcess::connect(local_addr, remote_addr, send_tx, recv_rx) {
+            match ClientProcess::connect(local_addr, remote_addr, send_tx, recv_rx, c_array_pool) {
                 Ok(mut process) => {
                     if let Err(e) = process.start() {
                         error!("error while running starting: {}", e)
@@ -40,15 +45,16 @@ impl Client {
         Ok(Client {
             in_sends: recv_tx,
             out_events: send_rx,
+            array_pool,
         })
     }
 
     pub fn send(&self, data: &[u8], send_type: SendType) -> anyhow::Result<()> {
-        if FragmentationManager::exceeds_max_length(data.len()) {
-            bail!("packets of this size arent supported");
-        }
+        let send_event = packets::construct_send_event(data, &self.array_pool)?;
 
-        self.in_sends.send((data.to_vec(), send_type))?;
+        if let Err(e) = self.in_sends.send((send_event, send_type)) {
+            packets::free_send_event(e.0 .0, &self.array_pool);
+        }
         Ok(())
     }
 

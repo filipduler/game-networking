@@ -65,7 +65,7 @@ impl ServerProcess {
         };
 
         Ok(Self {
-            connection_manager: ConnectionManager::new(max_clients, &send_tx),
+            connection_manager: ConnectionManager::new(max_clients, &send_tx, &array_pool),
             in_sends,
             out_events,
             send_tx,
@@ -146,8 +146,11 @@ impl ServerProcess {
         }
         //client doesn't exist and theres space on the server, start the connection process
         else if let Ok(Some(payload)) = self.connection_manager.process_connect(&addr, data) {
-            self.send_tx
-                .send(UdpSendEvent::ServerNonTracking(payload, addr))?;
+            let length = payload.len();
+            self.send_tx.send(UdpSendEvent::ServerNonTracking(
+                payload, length, //TODO: fix
+                addr,
+            ))?;
         }
 
         //disconnect the client

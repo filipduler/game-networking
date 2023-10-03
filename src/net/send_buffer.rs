@@ -13,6 +13,7 @@ pub struct SendBuffer {
 pub struct SendPayload {
     pub seq: u16,
     pub data: Vec<u8>,
+    pub length: usize,
     pub frag: bool,
 }
 
@@ -35,11 +36,18 @@ impl SendBufferManager {
         }
     }
 
-    pub fn push_send_buffer(&mut self, seq: u16, data: &[u8], frag: bool) -> Rc<SendPayload> {
+    pub fn push_send_buffer(
+        &mut self,
+        seq: u16,
+        data: Vec<u8>,
+        length: usize,
+        frag: bool,
+    ) -> Rc<SendPayload> {
         let send_buffer = SendBuffer {
             payload: Rc::new(SendPayload {
                 seq,
-                data: data.to_vec(),
+                data,
+                length,
                 frag,
             }),
             sent_at: None,

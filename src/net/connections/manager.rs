@@ -1,9 +1,12 @@
-use std::{borrow::BorrowMut, collections::HashMap, net::SocketAddr};
+use std::{borrow::BorrowMut, collections::HashMap, net::SocketAddr, sync::Arc};
 
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
-use crate::net::{int_buffer::IntBuffer, socket::UdpSendEvent, PacketType, MAGIC_NUMBER_HEADER};
+use crate::net::{
+    array_pool::ArrayPool, int_buffer::IntBuffer, socket::UdpSendEvent, PacketType,
+    MAGIC_NUMBER_HEADER,
+};
 
 use super::{identity::Identity, Connection};
 
@@ -14,10 +17,15 @@ pub struct ConnectionManager {
     addr_map: HashMap<SocketAddr, usize>,
     connect_requests: HashMap<SocketAddr, Identity>,
     sender: Sender<UdpSendEvent>,
+    array_pool: Arc<ArrayPool>,
 }
 
 impl ConnectionManager {
-    pub fn new(max_clients: usize, sender: &Sender<UdpSendEvent>) -> Self {
+    pub fn new(
+        max_clients: usize,
+        sender: &Sender<UdpSendEvent>,
+        array_pool: &Arc<ArrayPool>,
+    ) -> Self {
         ConnectionManager {
             capacity: max_clients,
             active_clients: 0,
@@ -25,6 +33,7 @@ impl ConnectionManager {
             connections: (0..max_clients).map(|_| None).collect(),
             connect_requests: HashMap::new(),
             sender: sender.clone(),
+            array_pool: array_pool.clone(),
         }
     }
 
@@ -111,8 +120,14 @@ impl ConnectionManager {
     }
 
     fn insert_connection(&mut self, index: usize, identity: &Identity) {
-        self.connections
-            .insert(index, Some(Connection::new(identity.clone(), &self.sender)));
+        self.connections.insert(
+            index,
+            Some(Connection::new(
+                identity.clone(),
+                &self.sender,
+                &self.array_pool,
+            )),
+        );
         self.addr_map.insert(identity.addr, index);
         self.active_clients += 1;
     }

@@ -19,6 +19,7 @@ use super::{
     connections,
     header::SendType,
     int_buffer::IntBuffer,
+    packets::SendEvent,
     socket::{run_udp_socket, UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
 };
@@ -32,7 +33,7 @@ pub struct ClientProcess {
     channel: Channel,
     //API channels
     out_events: Sender<ClientEvent>,
-    in_sends: Receiver<(Vec<u8>, SendType)>,
+    in_sends: Receiver<(SendEvent, SendType)>,
     //UDP channels
     send_tx: Sender<UdpSendEvent>,
     recv_rx: Receiver<UdpEvent>,
@@ -44,11 +45,11 @@ impl ClientProcess {
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
         out_events: Sender<ClientEvent>,
-        in_sends: Receiver<(Vec<u8>, SendType)>,
+        in_sends: Receiver<(SendEvent, SendType)>,
+        array_pool: Arc<ArrayPool>,
     ) -> anyhow::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
-        let array_pool = Arc::new(ArrayPool::new());
 
         let c_array_pool = array_pool.clone();
         thread::spawn(move || {
@@ -69,7 +70,13 @@ impl ClientProcess {
         out_events.send(ClientEvent::Connect(client_id))?;
 
         Ok(Self {
-            channel: Channel::new(local_addr, session_key, ChannelType::Client, &send_tx),
+            channel: Channel::new(
+                local_addr,
+                session_key,
+                ChannelType::Client,
+                &send_tx,
+                &array_pool,
+            ),
             in_sends,
             out_events,
             send_tx,
@@ -132,8 +139,17 @@ impl ClientProcess {
         Ok(())
     }
 
-    fn process_send_request(&mut self, data: Vec<u8>, send_type: SendType) {
-        self.channel.send_reliable(&data);
+    fn process_send_request(
+        &mut self,
+        send_event: SendEvent,
+        send_type: SendType,
+    ) -> anyhow::Result<()> {
+        match send_type {
+            SendType::Reliable => self.channel.send_reliable(send_event)?,
+            SendType::Unreliable => self.channel.send_unreliable(send_event)?,
+        }
+
+        Ok(())
     }
 
     fn update(&mut self) {

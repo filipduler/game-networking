@@ -14,7 +14,7 @@ use super::{
     BUFFER_SIZE, BUFFER_WINDOW_SIZE,
 };
 
-const FRAGMENT_SIZE: usize = 1024;
+pub const FRAGMENT_SIZE: usize = 1024;
 const MAX_FRAGMENT_SIZE: usize = FRAGMENT_SIZE * u8::MAX as usize;
 const GROUP_TIMEOUT: Duration = Duration::from_secs(5);
 

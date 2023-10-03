@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, bail};
 
 use crate::net::PacketType;
 
-use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
+use super::{array_pool::ArrayPool, int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
 pub const HEADER_SIZE: usize = 17;
 pub const FRAG_HEADER_SIZE: usize = 21;
@@ -124,14 +126,19 @@ impl Header {
         })
     }
 
-    pub fn create_packet(&self, data: Option<&[u8]>) -> Vec<u8> {
+    pub fn create_packet(
+        &self,
+        data: Option<&[u8]>,
+        array_pool: &Arc<ArrayPool>,
+    ) -> (Vec<u8>, usize) {
         let mut buffer = IntBuffer::new_at(0);
 
         let header_size = self.get_header_size();
 
         let data_len = if let Some(d) = data { d.len() } else { 0 };
 
-        let mut payload = vec![0_u8; data_len + header_size + 4];
+        let packet_length = data_len + header_size + 4;
+        let mut payload = array_pool.rent(packet_length);
         buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
         self.write(&mut payload, &mut buffer);
 
@@ -139,7 +146,7 @@ impl Header {
             buffer.write_slice(d, &mut payload);
         }
 
-        payload
+        (payload, packet_length)
     }
 
     pub fn get_header_size(&self) -> usize {

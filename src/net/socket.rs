@@ -22,10 +22,10 @@ pub enum UdpEvent {
 
 #[derive(Clone)]
 pub enum UdpSendEvent {
-    Server(Vec<u8>, SocketAddr, u16),
-    ServerNonTracking(Vec<u8>, SocketAddr),
-    Client(Vec<u8>, u16),
-    ClientNonTracking(Vec<u8>),
+    Server(Vec<u8>, usize, SocketAddr, u16),
+    ServerNonTracking(Vec<u8>, usize, SocketAddr),
+    Client(Vec<u8>, usize, u16),
+    ClientNonTracking(Vec<u8>, usize),
 }
 
 // A token to allow us to identify which event is for the `UdpSocket`.
@@ -99,14 +99,18 @@ pub fn run_udp_socket(
                             };
 
                             let send_result = match data {
-                                UdpSendEvent::Server(ref data, addr, _) => {
-                                    socket.send_to(data, addr)
+                                UdpSendEvent::Server(ref data, length, addr, _) => {
+                                    socket.send_to(&data[..length], addr)
                                 }
-                                UdpSendEvent::ServerNonTracking(ref data, addr) => {
-                                    socket.send_to(data, addr)
+                                UdpSendEvent::ServerNonTracking(ref data, length, addr) => {
+                                    socket.send_to(&data[..length], addr)
                                 }
-                                UdpSendEvent::Client(ref data, _) => socket.send(data),
-                                UdpSendEvent::ClientNonTracking(ref data) => socket.send(data),
+                                UdpSendEvent::Client(ref data, length, _) => {
+                                    socket.send(&data[..length])
+                                }
+                                UdpSendEvent::ClientNonTracking(ref data, length) => {
+                                    socket.send(&data[..length])
+                                }
                             };
 
                             match send_result {
@@ -114,13 +118,22 @@ pub fn run_udp_socket(
                                     info!("sent packet of size {length} on {local_addr}");
 
                                     let event = match data {
-                                        UdpSendEvent::Server(_, addr, seq) => {
+                                        UdpSendEvent::Server(data, _, addr, seq) => {
+                                            array_pool.free(data);
                                             Some(UdpEvent::SentServer(addr, seq, Instant::now()))
                                         }
-                                        UdpSendEvent::Client(_, seq) => {
+                                        UdpSendEvent::Client(data, _, seq) => {
+                                            array_pool.free(data);
                                             Some(UdpEvent::SentClient(seq, Instant::now()))
                                         }
-                                        _ => None,
+                                        UdpSendEvent::ServerNonTracking(data, _, _) => {
+                                            array_pool.free(data);
+                                            None
+                                        }
+                                        UdpSendEvent::ClientNonTracking(data, _) => {
+                                            array_pool.free(data);
+                                            None
+                                        }
                                     };
 
                                     if let Some(event) = event {
@@ -134,6 +147,8 @@ pub fn run_udp_socket(
                                     break;
                                 }
                                 Err(e) => {
+                                    //no point of returning the data to the pool.. program crashed anyway..
+
                                     return Err(e.into());
                                 }
                                 _ => {}

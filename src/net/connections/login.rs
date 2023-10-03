@@ -46,7 +46,7 @@ fn send_connection_request(client_salt: u64, sender: &Sender<UdpSendEvent>) -> a
     buffer.write_u8(PacketType::ConnectionRequest as u8, &mut payload);
     buffer.write_u64(client_salt, &mut payload);
 
-    sender.send(UdpSendEvent::ClientNonTracking(payload))?;
+    sender.send(UdpSendEvent::ClientNonTracking(payload, 21))?;
 
     Ok(())
 }
@@ -115,7 +115,7 @@ fn send_challange_response(
     buffer.write_u8(PacketType::ChallangeResponse as u8, &mut payload);
     buffer.write_u64(client_salt ^ server_salt, &mut payload);
 
-    sender.send(UdpSendEvent::ClientNonTracking(payload))?;
+    sender.send(UdpSendEvent::ClientNonTracking(payload, 21))?;
 
     Ok(())
 }
