@@ -4,7 +4,7 @@ use std::{
     net::SocketAddr,
     sync::Arc,
     thread::{self},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::bail;
@@ -20,7 +20,7 @@ use super::{
     header::SendType,
     int_buffer::IntBuffer,
     packets::SendEvent,
-    socket::{UdpEvent, UdpSendEvent, Socket},
+    socket::{Socket, UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
 };
 
@@ -45,56 +45,38 @@ impl ClientProcess {
         out_events: Sender<ClientEvent>,
         in_sends: Receiver<(SendEvent, SendType)>,
     ) -> anyhow::Result<Self> {
+        let mut socket = Socket::connect(local_addr, remote_addr)?;
 
-        /*let (session_key, client_id) =
-            connections::try_login(&recv_rx, &send_tx).expect("login failed");
+        let (session_key, client_id) = connections::try_login(&mut socket).expect("login failed");
 
-        out_events.send(ClientEvent::Connect(client_id))?;*/
-        let session_key = 0;
+        out_events.send(ClientEvent::Connect(client_id))?;
 
         Ok(Self {
-            channel: Channel::new(
-                local_addr,
-                session_key,
-                ChannelType::Client,
-            ),
-            socket: Socket::connect(local_addr, remote_addr)?,
+            channel: Channel::new(local_addr, session_key, ChannelType::Client),
+            socket,
             send_queue: VecDeque::new(),
             in_sends,
             out_events,
         })
     }
 
-    pub fn start(&mut self) -> io::Result<()> {
-        //to clean up stuff
+    pub fn start(&mut self) -> anyhow::Result<()> {
         let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
+        let mut udp_events = VecDeque::new();
 
-        /*loop {
+        loop {
             select! {
+                //constant updates
                 recv(interval_rx) -> _ => {
                     self.update();
                 }
-                //incoming read packets
-                recv(self.recv_rx) -> msg_result => {
-                    match msg_result {
-                        Ok(UdpEvent::Read(addr, length, data)) => {
-                            if let Err(ref e) = self.process_read_request(
-                                addr,
-                                &data[..length],
-                            ) {
-                                error!("failed processing read request: {e}");
-                            };
-                            self.array_pool.free(data);
-                        },
-                        Ok(UdpEvent::SentClient(seq, sent_at)) => {
-                            self.channel.send_buffer.mark_sent(seq, sent_at);
-                        },
-                        Err(e) => panic!("panic reading udp event {}", e),
-                        _ => {},
-                    }
-                },
                 //send requests coming fron the API
                 recv(self.in_sends) -> msg_result => {
+                    //prioritize update
+                    if interval_rx.try_recv().is_ok() {
+                        self.update();
+                    }
+
                     match msg_result {
                         Ok(msg) => self.process_send_request(
                             msg.0,
@@ -103,8 +85,30 @@ impl ClientProcess {
                         Err(e) => panic!("panic reading udp event {}", e),
                     };
                 }
+                //incoming read packets
+                default => {
+                    self.socket.process(
+                        Instant::now() + Duration::from_millis(10),
+                        None,
+                        &mut udp_events,
+                    )?;
+
+                    while let Some(udp_event) = udp_events.pop_back() {
+                        match udp_event {
+                            UdpEvent::Read(addr, buffer) => {
+                                if let Err(ref e) = self.process_read_request(addr, buffer.used_data()) {
+                                    error!("failed processing read request: {e}");
+                                };
+                            }
+                            UdpEvent::SentClient(seq, sent_at) => {
+                                self.channel.send_buffer.mark_sent(seq, sent_at);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
-        }*/
+        }
 
         Ok(())
     }

@@ -1,68 +1,76 @@
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use anyhow::bail;
 use crossbeam_channel::{Receiver, Sender};
 use rand::Rng;
 
 use crate::net::{
+    array_pool::ArrayPool,
     int_buffer::IntBuffer,
-    socket::{UdpEvent, UdpSendEvent},
+    socket::{Socket, UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
 };
 
-pub fn try_login(
-    reciever: &Receiver<UdpEvent>,
-    sender: &Sender<UdpSendEvent>,
-) -> anyhow::Result<(u64, u32)> {
+fn read_udp_event(socket: &mut Socket, timeout: Duration) -> anyhow::Result<UdpEvent> {
+    let mut events = VecDeque::with_capacity(1);
+    socket.process(Instant::now() + timeout, Some(1), &mut events)?;
+
+    if let Some(event) = events.pop_back() {
+        Ok(event)
+    } else {
+        bail!("no events received");
+    }
+}
+
+pub fn try_login(socket: &mut Socket) -> anyhow::Result<(u64, u32)> {
     let timeout = Duration::from_secs(5);
     let client_salt = rand::thread_rng().gen();
 
     //wait for start
-    if reciever.recv_timeout(timeout)? != UdpEvent::Start {
+    if !matches!(read_udp_event(socket, timeout)?, UdpEvent::Start) {
         bail!("expected start event");
     }
 
     //send connection request
-    send_connection_request(client_salt, sender)?;
+    send_connection_request(client_salt, socket)?;
 
     //wait for the challange
-    let server_salt = read_challange(client_salt, reciever, timeout)?;
+    let server_salt = read_challange(client_salt, socket, timeout)?;
 
     //send the challange response
-    send_challange_response(client_salt, server_salt, sender)?;
+    send_challange_response(client_salt, server_salt, socket)?;
 
     //wait for accept or deny response
-    let client_id = read_connection_status(reciever, timeout)?;
+    let client_id = read_connection_status(socket, timeout)?;
 
     Ok((client_salt ^ server_salt, client_id))
 }
 
-fn send_connection_request(client_salt: u64, sender: &Sender<UdpSendEvent>) -> anyhow::Result<()> {
-    let mut buffer = IntBuffer { index: 0 };
+fn send_connection_request(client_salt: u64, socket: &mut Socket) -> anyhow::Result<()> {
+    let mut int_buffer = IntBuffer::new_at(0);
 
-    let mut payload = vec![0_u8; 21];
+    let mut buffer = ArrayPool::rent(21);
 
-    buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-    buffer.write_u8(PacketType::ConnectionRequest as u8, &mut payload);
-    buffer.write_u64(client_salt, &mut payload);
+    int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+    int_buffer.write_u8(PacketType::ConnectionRequest as u8, &mut buffer);
+    int_buffer.write_u64(client_salt, &mut buffer);
+    buffer.used = int_buffer.index;
 
-    sender.send(UdpSendEvent::ClientNonTracking(payload, 21))?;
+    socket.enqueue_send_event(UdpSendEvent::Client(buffer, 0, false));
 
     Ok(())
 }
 
-fn read_challange(
-    client_salt: u64,
-    reciever: &Receiver<UdpEvent>,
-    timeout: Duration,
-) -> anyhow::Result<u64> {
-    //TODO: free data back to the array pool.. maybe wrap the read in some function with a callback
-    let (length, data) = if let UdpEvent::Read(_, length, data) = reciever.recv_timeout(timeout)? {
-        (length, data)
+fn read_challange(client_salt: u64, socket: &mut Socket, timeout: Duration) -> anyhow::Result<u64> {
+    let buffer = if let UdpEvent::Read(_, buffer) = read_udp_event(socket, timeout)? {
+        buffer
     } else {
         bail!("unexpected event");
     };
-    let data = &data[..length];
+    let data = &buffer.used_data();
 
     let mut buffer = IntBuffer { index: 0 };
     let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
@@ -79,13 +87,13 @@ fn read_challange(
     Ok(server_salt)
 }
 
-fn read_connection_status(reciever: &Receiver<UdpEvent>, timeout: Duration) -> anyhow::Result<u32> {
-    let (length, data) = if let UdpEvent::Read(_, length, data) = reciever.recv_timeout(timeout)? {
-        (length, data)
+fn read_connection_status(socket: &mut Socket, timeout: Duration) -> anyhow::Result<u32> {
+    let buffer = if let UdpEvent::Read(_, buffer) = read_udp_event(socket, timeout)? {
+        buffer
     } else {
         bail!("unexpected event");
     };
-    let data = &data[..length];
+    let data = buffer.used_data();
 
     let mut buffer = IntBuffer { index: 0 };
     let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
@@ -104,18 +112,17 @@ fn read_connection_status(reciever: &Receiver<UdpEvent>, timeout: Duration) -> a
 fn send_challange_response(
     client_salt: u64,
     server_salt: u64,
-    sender: &Sender<UdpSendEvent>,
+    socket: &mut Socket,
 ) -> anyhow::Result<()> {
-    let mut buffer = IntBuffer { index: 0 };
+    let mut int_buffer = IntBuffer { index: 0 };
 
-    let mut payload = vec![0_u8; 21];
-    buffer.index = 0;
+    let mut buffer = ArrayPool::rent(21);
 
-    buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-    buffer.write_u8(PacketType::ChallangeResponse as u8, &mut payload);
-    buffer.write_u64(client_salt ^ server_salt, &mut payload);
+    int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+    int_buffer.write_u8(PacketType::ChallangeResponse as u8, &mut buffer);
+    int_buffer.write_u64(client_salt ^ server_salt, &mut buffer);
 
-    sender.send(UdpSendEvent::Client(payload, 21, false))?;
+    socket.enqueue_send_event(UdpSendEvent::Client(buffer, 0, false));
 
     Ok(())
 }

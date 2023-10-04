@@ -1,11 +1,18 @@
-use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, net::SocketAddr, sync::Arc};
+use std::{
+    borrow::BorrowMut,
+    collections::{HashMap, VecDeque},
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
 use crate::net::{
-    array_pool::ArrayPool, int_buffer::IntBuffer, socket::UdpSendEvent, PacketType,
-    MAGIC_NUMBER_HEADER,
+    array_pool::{ArrayPool, BufferPoolRef},
+    int_buffer::IntBuffer,
+    socket::UdpSendEvent,
+    PacketType, MAGIC_NUMBER_HEADER,
 };
 
 use super::{identity::Identity, Connection};
@@ -16,24 +23,16 @@ pub struct ConnectionManager {
     connections: Vec<Option<Connection>>,
     addr_map: HashMap<SocketAddr, usize>,
     connect_requests: HashMap<SocketAddr, Identity>,
-    sender: Sender<UdpSendEvent>,
-    array_pool: Arc<ArrayPool>,
 }
 
 impl ConnectionManager {
-    pub fn new(
-        max_clients: usize,
-        sender: &Sender<UdpSendEvent>,
-        array_pool: &Arc<ArrayPool>,
-    ) -> Self {
+    pub fn new(max_clients: usize) -> Self {
         ConnectionManager {
             capacity: max_clients,
             active_clients: 0,
             addr_map: HashMap::with_capacity(max_clients),
             connections: (0..max_clients).map(|_| None).collect(),
             connect_requests: HashMap::new(),
-            sender: sender.clone(),
-            array_pool: array_pool.clone(),
         }
     }
 
@@ -50,13 +49,13 @@ impl ConnectionManager {
         &mut self,
         addr: &SocketAddr,
         data: &[u8],
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> anyhow::Result<Option<BufferPoolRef>> {
         if !self.has_free_slots() {
             return Ok(None);
         }
 
-        let mut buffer = IntBuffer { index: 0 };
-        let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
+        let mut int_buffer = IntBuffer::new_at(0);
+        let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(data)) {
             state
         } else {
             bail!("invalid connection state in header");
@@ -66,47 +65,49 @@ impl ConnectionManager {
         //if let Some(identity) = self.connect_requests.get_mut(addr) {
         if let Some(identity) = self.connect_requests.get(addr) {
             if state == PacketType::ChallangeResponse
-                && identity.session_key == buffer.read_u64(data)
+                && identity.session_key == int_buffer.read_u64(data)
             {
                 return Ok(self.finish_challange(addr));
             }
         } else {
-            let client_salt = buffer.read_u64(data);
+            let client_salt = int_buffer.read_u64(data);
             let identity = Identity::new(*addr, client_salt);
 
             self.connect_requests.insert(*addr, identity.clone());
 
             //generate challange packet
-            let mut payload = vec![0_u8; 21];
-            buffer.index = 0;
+            let mut buffer = ArrayPool::rent(21);
+            int_buffer.index = 0;
 
-            buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-            buffer.write_u8(PacketType::Challenge as u8, &mut payload);
-            buffer.write_u64(client_salt, &mut payload);
-            buffer.write_u64(identity.server_salt, &mut payload);
+            int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+            int_buffer.write_u8(PacketType::Challenge as u8, &mut buffer);
+            int_buffer.write_u64(client_salt, &mut buffer);
+            int_buffer.write_u64(identity.server_salt, &mut buffer);
+            buffer.used = int_buffer.index;
 
-            return Ok(Some(payload));
+            return Ok(Some(buffer));
         }
 
         Ok(None)
     }
 
-    fn finish_challange(&mut self, addr: &SocketAddr) -> Option<Vec<u8>> {
+    fn finish_challange(&mut self, addr: &SocketAddr) -> Option<BufferPoolRef> {
         if let Some(connection_index) = self.get_free_slot_index() {
             //remove the identity from the connect requests
             if let Some(identity) = self.connect_requests.remove(addr) {
-                let mut payload = vec![0_u8; 21];
-                let mut buffer = IntBuffer { index: 0 };
-                buffer.index = 0;
+                let mut buffer = ArrayPool::rent(21);
+                let mut int_buffer = IntBuffer::new_at(0);
+                int_buffer.index = 0;
 
-                buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-                buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut payload);
-                buffer.write_u32(identity.id, &mut payload);
+                int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+                int_buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut buffer);
+                int_buffer.write_u32(identity.id, &mut buffer);
+                buffer.used = int_buffer.index;
 
                 //insert the client
                 self.insert_connection(connection_index, &identity);
 
-                return Some(payload);
+                return Some(buffer);
             }
         }
 
@@ -120,14 +121,8 @@ impl ConnectionManager {
     }
 
     fn insert_connection(&mut self, index: usize, identity: &Identity) {
-        self.connections.insert(
-            index,
-            Some(Connection::new(
-                identity.clone(),
-                &self.sender,
-                &self.array_pool,
-            )),
-        );
+        self.connections
+            .insert(index, Some(Connection::new(identity.clone())));
         self.addr_map.insert(identity.addr, index);
         self.active_clients += 1;
     }

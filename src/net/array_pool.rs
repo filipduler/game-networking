@@ -31,10 +31,10 @@ impl ArrayPool {
             }
         }
 
-        return BufferPoolRef {
+        BufferPoolRef {
             buffer: vec![0_u8; rounded_size],
             used: 0,
-        };
+        }
     }
 
     pub fn free(mut data: Vec<u8>) {
@@ -80,7 +80,7 @@ impl BufferPoolRef {
 
     #[inline]
     pub fn copy_slice(&mut self, src: &[u8]) {
-        self.buffer[..src.len()].copy_from_slice(&src);
+        self.buffer[..src.len()].copy_from_slice(src);
         self.used = src.len();
     }
 }

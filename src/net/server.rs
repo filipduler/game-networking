@@ -8,11 +8,12 @@ use super::{
     array_pool::ArrayPool,
     fragmentation_manager::FragmentationManager,
     header::SendType,
+    packets::{self, SendEvent},
     server_process::{ServerEvent, ServerProcess},
 };
 
 pub struct Server {
-    in_sends: Sender<(SocketAddr, Vec<u8>, SendType)>,
+    in_sends: Sender<(SocketAddr, SendEvent, SendType)>,
     out_events: Receiver<ServerEvent>,
 }
 
@@ -45,10 +46,9 @@ impl Server {
     }
 
     pub fn send(&self, addr: SocketAddr, data: &[u8], send_type: SendType) -> anyhow::Result<()> {
-        if FragmentationManager::exceeds_max_length(data.len()) {
-            bail!("packets of this size arent supported");
-        }
-        self.in_sends.send((addr, data.to_vec(), send_type))?;
+        let send_event = packets::construct_send_event(data)?;
+
+        self.in_sends.send((addr, send_event, send_type))?;
         Ok(())
     }
 

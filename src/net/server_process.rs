@@ -1,10 +1,10 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     error, io,
     net::SocketAddr,
     sync::Arc,
     thread::{self},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::bail;
@@ -16,7 +16,8 @@ use super::{
     channel::ReadPayload,
     connections::ConnectionManager,
     header::SendType,
-    socket::{UdpEvent, UdpSendEvent},
+    packets::SendEvent,
+    socket::{Socket, UdpEvent, UdpSendEvent},
 };
 
 pub enum ServerEvent {
@@ -27,15 +28,13 @@ pub enum ServerEvent {
 }
 
 pub struct ServerProcess {
+    socket: Socket,
     //API channels
     out_events: Sender<ServerEvent>,
-    in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
-    //UDP channels
-    send_tx: Sender<UdpSendEvent>,
-    recv_rx: Receiver<UdpEvent>,
+    in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
     //connections
+    send_queue: VecDeque<UdpSendEvent>,
     connection_manager: ConnectionManager,
-    array_pool: Arc<ArrayPool>,
 }
 
 impl ServerProcess {
@@ -43,73 +42,34 @@ impl ServerProcess {
         addr: SocketAddr,
         max_clients: usize,
         out_events: Sender<ServerEvent>,
-        in_sends: Receiver<(SocketAddr, Vec<u8>, SendType)>,
+        in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
     ) -> anyhow::Result<Self> {
-        let (send_tx, send_rx) = crossbeam_channel::unbounded();
-        let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
-        let array_pool = Arc::new(ArrayPool::new());
-
-        let c_array_pool = array_pool.clone();
-        thread::spawn(move || {
-            let array_pool = Arc::new(ArrayPool::new());
-            if let Err(e) = run_udp_socket(addr, None, send_rx, recv_tx, c_array_pool) {
-                error!("error while running udp server: {}", e)
-            }
-        });
-
-        match recv_rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(UdpEvent::Start) => {
-                out_events.send(ServerEvent::Start).unwrap();
-            }
-            _ => bail!("failed waiting for start event"),
-        };
-
         Ok(Self {
-            connection_manager: ConnectionManager::new(max_clients, &send_tx, &array_pool),
+            socket: Socket::bind(addr)?,
+            connection_manager: ConnectionManager::new(max_clients),
             in_sends,
+            send_queue: VecDeque::new(),
             out_events,
-            send_tx,
-            recv_rx,
-            array_pool,
         })
     }
 
-    pub fn start(&mut self) -> io::Result<()> {
-        //to clean up stuff
+    pub fn start(&mut self) -> anyhow::Result<()> {
         let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
-
-        //NOTE: a possiblity of how to prioritize interval_rx would be to do a interval.rx.try_recv
-        //on the start of every other channel read/write so it would always have a priority..
+        let mut udp_events = VecDeque::new();
 
         loop {
             select! {
+                //constant updates
                 recv(interval_rx) -> _ => {
                     self.update();
                 }
-                //incoming read packets
-                recv(self.recv_rx) -> msg_result => {
-                    match msg_result {
-                        Ok(UdpEvent::Read(addr, length, data)) => {
-                            if let Err(ref e) = self.process_read_request(
-                                addr,
-                                &data[..length],
-                            ) {
-                                error!("failed processing read request: {e}");
-                            };
-                            self.array_pool.free(data);
-                        },
-                        Ok(UdpEvent::SentServer(addr, seq, sent_at)) => {
-                            if let Some(conn) = self.connection_manager.get_client_mut(&addr) {
-                                conn.channel.send_buffer.mark_sent(seq, sent_at);
-                            }
-                        },
-                        Err(e) => panic!("panic reading udp event {}", e),
-                        _ => {},
-                    }
-
-                },
                 //send requests coming fron the API
                 recv(self.in_sends) -> msg_result => {
+                    //prioritize update
+                    if interval_rx.try_recv().is_ok() {
+                        self.update();
+                    }
+
                     match msg_result {
                         Ok(msg) => self.process_send_request(
                             msg.0,
@@ -119,8 +79,37 @@ impl ServerProcess {
                         Err(e) => panic!("panic reading udp event {}", e),
                     };
                 }
+                //incoming read packets
+                default => {
+                    self.socket.process(
+                        Instant::now() + Duration::from_millis(10),
+                        None,
+                        &mut udp_events,
+                    )?;
+
+                    while let Some(udp_event) = udp_events.pop_back() {
+                        match udp_event {
+                            UdpEvent::Start => {
+                                self.out_events.send(ServerEvent::Start)?;
+                            }
+                            UdpEvent::Read(addr, buffer) => {
+                                if let Err(ref e) = self.process_read_request(addr, buffer.used_data()) {
+                                    error!("failed processing read request: {e}");
+                                };
+                            }
+                            UdpEvent::SentServer(addr, seq, sent_at) => {
+                                if let Some(conn) = self.connection_manager.get_client_mut(&addr) {
+                                    conn.channel.send_buffer.mark_sent(seq, sent_at);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
+
+        Ok(())
     }
 
     fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
@@ -145,12 +134,9 @@ impl ServerProcess {
             }
         }
         //client doesn't exist and theres space on the server, start the connection process
-        else if let Ok(Some(payload)) = self.connection_manager.process_connect(&addr, data) {
-            let length = payload.len();
-            self.send_tx.send(UdpSendEvent::ServerNonTracking(
-                payload, length, //TODO: fix
-                addr,
-            ))?;
+        else if let Ok(Some(buffer)) = self.connection_manager.process_connect(&addr, data) {
+            self.send_queue
+                .push_front(UdpSendEvent::Server(buffer, addr, 0, false));
         }
 
         //disconnect the client
@@ -161,13 +147,23 @@ impl ServerProcess {
         Ok(())
     }
 
-    fn process_send_request(&mut self, addr: SocketAddr, data: Vec<u8>, send_type: SendType) {
+    fn process_send_request(
+        &mut self,
+        addr: SocketAddr,
+        send_event: SendEvent,
+        send_type: SendType,
+    ) -> anyhow::Result<()> {
         if let Some(connection) = self.connection_manager.get_client_mut(&addr) {
-            connection.channel.send_reliable(&data);
+            match send_type {
+                SendType::Reliable => connection.channel.send_reliable(send_event)?,
+                SendType::Unreliable => connection.channel.send_unreliable(send_event)?,
+            }
         }
+
+        Ok(())
     }
 
     fn update(&mut self) {
-        self.connection_manager.update();
+        self.connection_manager.update(&mut self.send_queue);
     }
 }

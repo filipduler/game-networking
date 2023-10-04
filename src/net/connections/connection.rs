@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant, collections::VecDeque};
+use std::{collections::VecDeque, sync::Arc, time::Instant};
 
 use crossbeam_channel::Sender;
 
@@ -16,25 +16,15 @@ pub struct Connection {
     pub channel: Channel,
     pub received_at: Instant,
     pub last_received: Instant,
-    pool_array: Arc<ArrayPool>,
 }
 
 impl Connection {
-    pub fn new(
-        identity: Identity,
-        sender: &Sender<UdpSendEvent>,
-        pool_array: &Arc<ArrayPool>,
-    ) -> Self {
+    pub fn new(identity: Identity) -> Self {
         Self {
-            channel: Channel::new(
-                identity.addr,
-                identity.session_key,
-                ChannelType::Server,
-            ),
+            channel: Channel::new(identity.addr, identity.session_key, ChannelType::Server),
             identity,
             received_at: Instant::now(),
             last_received: Instant::now(),
-            pool_array: pool_array.clone(),
         }
     }
 

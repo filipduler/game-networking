@@ -61,7 +61,27 @@ impl Socket {
         Ok(socket)
     }
 
-    pub fn process(&mut self, deadline: Instant, events: &mut VecDeque<UdpEvent>) -> anyhow::Result<()> {
+    pub fn enqueue_send_event(&mut self, send_event: UdpSendEvent) {
+        self.send_queue.push_front(send_event);
+    }
+
+    pub fn enqueue_send_events(&mut self, send_events: &mut VecDeque<UdpSendEvent>) {
+        if self.send_queue.is_empty() {
+            std::mem::swap(send_events, &mut self.send_queue);
+        } else {
+            //TODO: test this
+            while let Some(packet) = send_events.pop_back() {
+                self.send_queue.push_back(packet);
+            }
+        }
+    }
+
+    pub fn process(
+        &mut self,
+        deadline: Instant,
+        max_events: Option<usize>,
+        events: &mut VecDeque<UdpEvent>,
+    ) -> anyhow::Result<()> {
         loop {
             let timeout = deadline - Instant::now();
 
@@ -90,7 +110,6 @@ impl Socket {
                             let mut send_finished = true;
 
                             while let Some(packet) = self.send_queue.front() {
-                                
                                 let send_result = match packet {
                                     UdpSendEvent::Server(ref data, addr, _, _) => {
                                         self.socket.send_to(data.used_data(), *addr)
@@ -105,7 +124,7 @@ impl Socket {
                                         info!("sent packet of size {length}");
 
                                         match packet {
-                                            UdpSendEvent::Server(data,addr, seq, track) => {
+                                            UdpSendEvent::Server(data, addr, seq, track) => {
                                                 if *track {
                                                     events.push_front(UdpEvent::SentServer(
                                                         *addr,
@@ -113,12 +132,14 @@ impl Socket {
                                                         Instant::now(),
                                                     ));
                                                 }
-                                                
                                             }
                                             UdpSendEvent::Client(data, seq, track) => {
                                                 if *track {
-                                                    events.push_front(UdpEvent::SentClient(*seq, Instant::now()));
-                                                }  
+                                                    events.push_front(UdpEvent::SentClient(
+                                                        *seq,
+                                                        Instant::now(),
+                                                    ));
+                                                }
                                             }
                                         };
                                     }
@@ -145,20 +166,23 @@ impl Socket {
                             loop {
                                 match self.socket.recv_from(&mut self.buf) {
                                     Ok((packet_size, source_address)) => {
-                                        if packet_size >= 4 && self.buf[..4] == MAGIC_NUMBER_HEADER {
-                                            info!(
-                                        "received packet of size {packet_size}"
-                                    );
+                                        if packet_size >= 4 && self.buf[..4] == MAGIC_NUMBER_HEADER
+                                        {
+                                            info!("received packet of size {packet_size}");
                                             let data_size = packet_size - 4;
                                             let mut buffer = ArrayPool::rent(data_size);
 
                                             //copy the data
                                             buffer.copy_slice(&self.buf[4..packet_size]);
 
-                                            events.push_front(UdpEvent::Read(
-                                                source_address,
-                                                buffer,
-                                            ));
+                                            events
+                                                .push_front(UdpEvent::Read(source_address, buffer));
+
+                                            if let Some(max_events) = max_events {
+                                                if max_events >= events.len() {
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
                                     Err(ref e) if would_block(e) => break,
