@@ -67,7 +67,7 @@ impl Channel {
         match send_event {
             SendEvent::Single(mut buffer) => {
                 let payload = self.create_send_buffer(buffer, false, 0, 0, 0);
-                self.send_wrapped_buffer_pool_ref(payload.seq, payload.buffer.clone(), send_queue)?;
+                self.send_tracking(payload.seq, payload.buffer.clone(), send_queue)?;
             }
             SendEvent::Fragmented(fragments) => {
                 let fragments = self.fragmentation.split_fragments(fragments)?;
@@ -79,11 +79,7 @@ impl Channel {
                         chunk.fragment_id,
                         fragments.chunk_count,
                     );
-                    self.send_wrapped_buffer_pool_ref(
-                        payload.seq,
-                        payload.buffer.clone(),
-                        send_queue,
-                    )?;
+                    self.send_tracking(payload.seq, payload.buffer.clone(), send_queue)?;
                 }
             }
         };
@@ -98,20 +94,20 @@ impl Channel {
     ) -> anyhow::Result<()> {
         match send_event {
             SendEvent::Single(mut buffer) => {
-                let seq = self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
-                self.send_buffer_pool_ref(seq, buffer, send_queue)?;
+                self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
+                self.send_non_tracking(buffer, send_queue)?;
             }
             SendEvent::Fragmented(mut fragments) => {
                 let fragments = self.fragmentation.split_fragments(fragments)?;
                 for mut chunk in fragments.chunks {
-                    let seq = self.create_unreliable_packet(
+                    self.create_unreliable_packet(
                         &mut chunk.buffer,
                         true,
                         fragments.group_id,
                         chunk.fragment_id,
                         fragments.chunk_count,
                     );
-                    self.send_buffer_pool_ref(seq, chunk.buffer, send_queue)?;
+                    self.send_non_tracking(chunk.buffer, send_queue)?;
                 }
             }
         };
@@ -132,35 +128,34 @@ impl Channel {
 
         let seq = self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
 
-        self.send_buffer_pool_ref(seq, buffer, send_queue)?;
+        self.send_non_tracking(buffer, send_queue)?;
 
         Ok(())
     }
 
-    pub fn send_wrapped_buffer_pool_ref(
+    pub fn send_tracking(
         &mut self,
         seq: u16,
         buffer: Rc<RefCell<BufferPoolRef>>,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<()> {
         send_queue.push_front(match self.mode {
-            ChannelType::Client => UdpSendEvent::ClientWrapped(buffer, seq, true),
-            ChannelType::Server => UdpSendEvent::ServerWrapped(buffer, self.addr, seq, true),
+            ChannelType::Client => UdpSendEvent::ClientTracking(buffer, seq),
+            ChannelType::Server => UdpSendEvent::ServerTracking(buffer, self.addr, seq),
         });
         self.send_ack = false;
 
         Ok(())
     }
 
-    pub fn send_buffer_pool_ref(
+    pub fn send_non_tracking(
         &mut self,
-        seq: u16,
         buffer: BufferPoolRef,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<()> {
         send_queue.push_front(match self.mode {
-            ChannelType::Client => UdpSendEvent::Client(buffer, seq, true),
-            ChannelType::Server => UdpSendEvent::Server(buffer, self.addr, seq, true),
+            ChannelType::Client => UdpSendEvent::Client(buffer),
+            ChannelType::Server => UdpSendEvent::Server(buffer, self.addr),
         });
         self.send_ack = false;
 
@@ -260,7 +255,7 @@ impl Channel {
         fragment_group_id: u16,
         fragment_id: u8,
         fragment_size: u8,
-    ) -> u16 {
+    ) {
         let mut header = Header::new(
             self.unreliable_seq,
             self.session_key,
@@ -276,11 +271,7 @@ impl Channel {
         let mut int_buffer = IntBuffer::new_at(4);
         header.write(buffer, &mut int_buffer);
 
-        let seq = self.unreliable_seq;
-
         Sequence::increment(&mut self.unreliable_seq);
-
-        seq
     }
 
     pub fn create_send_buffer(

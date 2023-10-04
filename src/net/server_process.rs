@@ -136,7 +136,7 @@ impl ServerProcess {
         //client doesn't exist and theres space on the server, start the connection process
         else if let Ok(Some(buffer)) = self.connection_manager.process_connect(&addr, data) {
             self.send_queue
-                .push_front(UdpSendEvent::Server(buffer, addr, 0, false));
+                .push_front(UdpSendEvent::Server(buffer, addr));
         }
 
         //disconnect the client

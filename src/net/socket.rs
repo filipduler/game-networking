@@ -26,10 +26,10 @@ pub enum UdpEvent {
 }
 
 pub enum UdpSendEvent {
-    ServerWrapped(Rc<RefCell<BufferPoolRef>>, SocketAddr, u16, bool),
-    Server(BufferPoolRef, SocketAddr, u16, bool),
-    ClientWrapped(Rc<RefCell<BufferPoolRef>>, u16, bool),
-    Client(BufferPoolRef, u16, bool),
+    ServerTracking(Rc<RefCell<BufferPoolRef>>, SocketAddr, u16),
+    Server(BufferPoolRef, SocketAddr),
+    ClientTracking(Rc<RefCell<BufferPoolRef>>, u16),
+    Client(BufferPoolRef),
 }
 
 pub struct Socket {
@@ -116,16 +116,16 @@ impl Socket {
 
                             while let Some(packet) = self.send_queue.front() {
                                 let send_result = match packet {
-                                    UdpSendEvent::ServerWrapped(ref data, addr, _, _) => {
+                                    UdpSendEvent::ServerTracking(ref data, addr, _) => {
                                         self.socket.send_to(data.borrow().used_data(), *addr)
                                     }
-                                    UdpSendEvent::ClientWrapped(ref data, _, _) => {
+                                    UdpSendEvent::ClientTracking(ref data, _) => {
                                         self.socket.send(data.borrow().used_data())
                                     }
-                                    UdpSendEvent::Server(ref data, addr, _, _) => {
+                                    UdpSendEvent::Server(ref data, addr) => {
                                         self.socket.send_to(data.used_data(), *addr)
                                     }
-                                    UdpSendEvent::Client(ref data, _, _) => {
+                                    UdpSendEvent::Client(ref data) => {
                                         self.socket.send(data.used_data())
                                     }
                                 };
@@ -135,40 +135,20 @@ impl Socket {
                                         info!("sent packet of size {length}");
 
                                         match packet {
-                                            UdpSendEvent::ServerWrapped(_, addr, seq, track) => {
-                                                if *track {
-                                                    events.push_front(UdpEvent::SentServer(
-                                                        *addr,
-                                                        *seq,
-                                                        Instant::now(),
-                                                    ));
-                                                }
+                                            UdpSendEvent::ServerTracking(_, addr, seq) => {
+                                                events.push_front(UdpEvent::SentServer(
+                                                    *addr,
+                                                    *seq,
+                                                    Instant::now(),
+                                                ));
                                             }
-                                            UdpSendEvent::ClientWrapped(_, seq, track) => {
-                                                if *track {
-                                                    events.push_front(UdpEvent::SentClient(
-                                                        *seq,
-                                                        Instant::now(),
-                                                    ));
-                                                }
+                                            UdpSendEvent::ClientTracking(_, seq) => {
+                                                events.push_front(UdpEvent::SentClient(
+                                                    *seq,
+                                                    Instant::now(),
+                                                ));
                                             }
-                                            UdpSendEvent::Server(_, addr, seq, track) => {
-                                                if *track {
-                                                    events.push_front(UdpEvent::SentServer(
-                                                        *addr,
-                                                        *seq,
-                                                        Instant::now(),
-                                                    ));
-                                                }
-                                            }
-                                            UdpSendEvent::Client(_, seq, track) => {
-                                                if *track {
-                                                    events.push_front(UdpEvent::SentClient(
-                                                        *seq,
-                                                        Instant::now(),
-                                                    ));
-                                                }
-                                            }
+                                            _ => {}
                                         };
                                     }
                                     Err(ref e) if would_block(e) => {

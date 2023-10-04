@@ -59,7 +59,7 @@ fn send_connection_request(client_salt: u64, socket: &mut Socket) -> anyhow::Res
     int_buffer.write_u64(client_salt, &mut buffer);
     int_buffer.set_length(&mut buffer);
 
-    socket.enqueue_send_event(UdpSendEvent::Client(buffer, 0, false));
+    socket.enqueue_send_event(UdpSendEvent::Client(buffer));
 
     Ok(())
 }
@@ -122,7 +122,7 @@ fn send_challange_response(
     int_buffer.write_u8(PacketType::ChallangeResponse as u8, &mut buffer);
     int_buffer.write_u64(client_salt ^ server_salt, &mut buffer);
 
-    socket.enqueue_send_event(UdpSendEvent::Client(buffer, 0, false));
+    socket.enqueue_send_event(UdpSendEvent::Client(buffer));
 
     Ok(())
 }
