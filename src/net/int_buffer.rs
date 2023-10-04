@@ -1,10 +1,29 @@
+use super::array_pool::BufferPoolRef;
+
+#[derive(Default)]
 pub struct IntBuffer {
     pub index: usize,
 }
 
 impl IntBuffer {
+    #[inline]
     pub fn new_at(index: usize) -> Self {
         Self { index }
+    }
+
+    #[inline]
+    pub fn jump(&mut self, length: usize) {
+        self.index += length
+    }
+
+    #[inline]
+    pub fn set_length(&self, buffer: &mut BufferPoolRef) {
+        buffer.used = self.index
+    }
+
+    #[inline]
+    pub fn reset(&mut self) {
+        self.index = 0;
     }
 
     #[inline]

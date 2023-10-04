@@ -155,8 +155,12 @@ impl ServerProcess {
     ) -> anyhow::Result<()> {
         if let Some(connection) = self.connection_manager.get_client_mut(&addr) {
             match send_type {
-                SendType::Reliable => connection.channel.send_reliable(send_event)?,
-                SendType::Unreliable => connection.channel.send_unreliable(send_event)?,
+                SendType::Reliable => connection
+                    .channel
+                    .send_reliable(send_event, &mut self.send_queue)?,
+                SendType::Unreliable => connection
+                    .channel
+                    .send_unreliable(send_event, &mut self.send_queue)?,
             }
         }
 

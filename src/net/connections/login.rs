@@ -50,14 +50,14 @@ pub fn try_login(socket: &mut Socket) -> anyhow::Result<(u64, u32)> {
 }
 
 fn send_connection_request(client_salt: u64, socket: &mut Socket) -> anyhow::Result<()> {
-    let mut int_buffer = IntBuffer::new_at(0);
+    let mut int_buffer = IntBuffer::default();
 
     let mut buffer = ArrayPool::rent(21);
 
     int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
     int_buffer.write_u8(PacketType::ConnectionRequest as u8, &mut buffer);
     int_buffer.write_u64(client_salt, &mut buffer);
-    buffer.used = int_buffer.index;
+    int_buffer.set_length(&mut buffer);
 
     socket.enqueue_send_event(UdpSendEvent::Client(buffer, 0, false));
 

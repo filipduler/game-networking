@@ -25,7 +25,7 @@ impl ArrayPool {
                 if let Some(data) = pool.pop_front() {
                     return BufferPoolRef {
                         buffer: data,
-                        used: 0,
+                        used: size,
                     };
                 }
             }
@@ -33,7 +33,7 @@ impl ArrayPool {
 
         BufferPoolRef {
             buffer: vec![0_u8; rounded_size],
-            used: 0,
+            used: size,
         }
     }
 
@@ -76,12 +76,6 @@ impl BufferPoolRef {
     #[inline]
     pub fn used_data(&self) -> &[u8] {
         &self.buffer[..self.used]
-    }
-
-    #[inline]
-    pub fn copy_slice(&mut self, src: &[u8]) {
-        self.buffer[..src.len()].copy_from_slice(src);
-        self.used = src.len();
     }
 }
 

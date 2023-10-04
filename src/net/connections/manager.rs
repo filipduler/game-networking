@@ -54,7 +54,7 @@ impl ConnectionManager {
             return Ok(None);
         }
 
-        let mut int_buffer = IntBuffer::new_at(0);
+        let mut int_buffer = IntBuffer::default();
         let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(data)) {
             state
         } else {
@@ -83,7 +83,7 @@ impl ConnectionManager {
             int_buffer.write_u8(PacketType::Challenge as u8, &mut buffer);
             int_buffer.write_u64(client_salt, &mut buffer);
             int_buffer.write_u64(identity.server_salt, &mut buffer);
-            buffer.used = int_buffer.index;
+            int_buffer.set_length(&mut buffer);
 
             return Ok(Some(buffer));
         }
@@ -96,13 +96,12 @@ impl ConnectionManager {
             //remove the identity from the connect requests
             if let Some(identity) = self.connect_requests.remove(addr) {
                 let mut buffer = ArrayPool::rent(21);
-                let mut int_buffer = IntBuffer::new_at(0);
-                int_buffer.index = 0;
+                let mut int_buffer = IntBuffer::default();
 
                 int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
                 int_buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut buffer);
                 int_buffer.write_u32(identity.id, &mut buffer);
-                buffer.used = int_buffer.index;
+                int_buffer.set_length(&mut buffer);
 
                 //insert the client
                 self.insert_connection(connection_index, &identity);

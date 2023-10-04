@@ -131,8 +131,12 @@ impl ClientProcess {
         send_type: SendType,
     ) -> anyhow::Result<()> {
         match send_type {
-            SendType::Reliable => self.channel.send_reliable(send_event)?,
-            SendType::Unreliable => self.channel.send_unreliable(send_event)?,
+            SendType::Reliable => self
+                .channel
+                .send_reliable(send_event, &mut self.send_queue)?,
+            SendType::Unreliable => self
+                .channel
+                .send_unreliable(send_event, &mut self.send_queue)?,
         }
 
         Ok(())

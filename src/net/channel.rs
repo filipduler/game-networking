@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, rc::Rc, sync::Arc, collections::VecDeque};
+use std::{cell::RefCell, collections::VecDeque, net::SocketAddr, rc::Rc, sync::Arc};
 
 use anyhow::bail;
 use crossbeam_channel::Sender;
@@ -7,6 +7,7 @@ use super::{
     array_pool::{ArrayPool, BufferPoolRef},
     fragmentation_manager::FragmentationManager,
     header::{Header, SendType, HEADER_SIZE},
+    int_buffer::{self, IntBuffer},
     packets::SendEvent,
     send_buffer::{SendBufferManager, SendPayload},
     sequence::{Sequence, SequenceBuffer, WindowSequenceBuffer},
@@ -43,11 +44,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn new(
-        addr: SocketAddr,
-        session_key: u64,
-        mode: ChannelType,
-    ) -> Self {
+    pub fn new(addr: SocketAddr, session_key: u64, mode: ChannelType) -> Self {
         Self {
             mode,
             session_key,
@@ -62,63 +59,105 @@ impl Channel {
         }
     }
 
-    pub fn send_reliable(&mut self, send_event: SendEvent) -> anyhow::Result<()> {
+    pub fn send_reliable(
+        &mut self,
+        send_event: SendEvent,
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) -> anyhow::Result<()> {
         match send_event {
-            SendEvent::Single(buffer) => {}
-            SendEvent::Fragmented(fragments) => {}
+            SendEvent::Single(mut buffer) => {
+                let payload = self.create_send_buffer(buffer, false, 0, 0, 0);
+                self.send_wrapped_buffer_pool_ref(payload.seq, payload.buffer.clone(), send_queue)?;
+            }
+            SendEvent::Fragmented(fragments) => {
+                let fragments = self.fragmentation.split_fragments(fragments)?;
+                for mut chunk in fragments.chunks {
+                    let payload = self.create_send_buffer(
+                        chunk.buffer,
+                        true,
+                        fragments.group_id,
+                        chunk.fragment_id,
+                        fragments.chunk_count,
+                    );
+                    self.send_wrapped_buffer_pool_ref(
+                        payload.seq,
+                        payload.buffer.clone(),
+                        send_queue,
+                    )?;
+                }
+            }
         };
-        /*if FragmentationManager::should_fragment(data.len()) {
-            let fragments = self.fragmentation.split_fragments(data)?;
-            for chunk in &fragments.chunks {
-                let payload = self.create_send_buffer(
-                    chunk.data,
-                    true,
-                    fragments.group_id,
-                    chunk.fragment_id,
-                    fragments.chunk_count,
-                );
-                self.send(payload.seq, &payload.data)?;
-            }
-        } else {
-            let payload = self.create_send_buffer(data, false, 0, 0, 0);
-            self.send(payload.seq, &payload.data)?;
-        }*/
 
         Ok(())
     }
 
-    pub fn send_unreliable(&mut self, send_event: SendEvent) -> anyhow::Result<()> {
-        /*if FragmentationManager::should_fragment(data.len()) {
-            let fragments = self.fragmentation.split_fragments(data)?;
-            for chunk in &fragments.chunks {
-                let (seq, payload) = self.create_unreliable_packet(
-                    chunk.data,
-                    true,
-                    fragments.group_id,
-                    chunk.fragment_id,
-                    fragments.chunk_count,
-                );
-                self.send(seq, data)?;
+    pub fn send_unreliable(
+        &mut self,
+        send_event: SendEvent,
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) -> anyhow::Result<()> {
+        match send_event {
+            SendEvent::Single(mut buffer) => {
+                let seq = self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
+                self.send_buffer_pool_ref(seq, buffer, send_queue)?;
             }
-        } else {
-            let (seq, payload) = self.create_unreliable_packet(data, false, 0, 0, 0);
-            self.send(seq, &payload)?;
-        }*/
+            SendEvent::Fragmented(mut fragments) => {
+                let fragments = self.fragmentation.split_fragments(fragments)?;
+                for mut chunk in fragments.chunks {
+                    let seq = self.create_unreliable_packet(
+                        &mut chunk.buffer,
+                        true,
+                        fragments.group_id,
+                        chunk.fragment_id,
+                        fragments.chunk_count,
+                    );
+                    self.send_buffer_pool_ref(seq, chunk.buffer, send_queue)?;
+                }
+            }
+        };
 
         Ok(())
     }
 
-    pub fn send_empty_ack(&mut self, send_queue: &mut VecDeque<UdpSendEvent>) -> anyhow::Result<()> {
+    pub fn send_empty_ack(
+        &mut self,
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) -> anyhow::Result<()> {
         let empty_arr = &MAGIC_NUMBER_HEADER[0..0];
 
-        let (seq, buffer) = self.create_unreliable_packet(empty_arr, false, 0, 0, 0);
+        let mut int_buffer = IntBuffer::default();
+        let mut buffer = ArrayPool::rent(4 + HEADER_SIZE);
 
-        self.send(seq, buffer, send_queue)?;
+        int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+
+        let seq = self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
+
+        self.send_buffer_pool_ref(seq, buffer, send_queue)?;
 
         Ok(())
     }
 
-    pub fn send(&mut self, seq: u16, buffer: BufferPoolRef, send_queue: &mut VecDeque<UdpSendEvent>) -> anyhow::Result<()> {
+    pub fn send_wrapped_buffer_pool_ref(
+        &mut self,
+        seq: u16,
+        buffer: Rc<RefCell<BufferPoolRef>>,
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) -> anyhow::Result<()> {
+        send_queue.push_front(match self.mode {
+            ChannelType::Client => UdpSendEvent::ClientWrapped(buffer, seq, true),
+            ChannelType::Server => UdpSendEvent::ServerWrapped(buffer, self.addr, seq, true),
+        });
+        self.send_ack = false;
+
+        Ok(())
+    }
+
+    pub fn send_buffer_pool_ref(
+        &mut self,
+        seq: u16,
+        buffer: BufferPoolRef,
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) -> anyhow::Result<()> {
         send_queue.push_front(match self.mode {
             ChannelType::Client => UdpSendEvent::Client(buffer, seq, true),
             ChannelType::Server => UdpSendEvent::Server(buffer, self.addr, seq, true),
@@ -216,12 +255,12 @@ impl Channel {
 
     pub fn create_unreliable_packet(
         &mut self,
-        data: &[u8],
+        buffer: &mut BufferPoolRef,
         frag: bool,
         fragment_group_id: u16,
         fragment_id: u8,
         fragment_size: u8,
-    ) -> (u16, BufferPoolRef) {
+    ) -> u16 {
         let mut header = Header::new(
             self.unreliable_seq,
             self.session_key,
@@ -234,17 +273,19 @@ impl Channel {
 
         self.write_header_ack_fiels(&mut header);
 
-        let buffer = header.create_packet(Some(data));
+        let mut int_buffer = IntBuffer::new_at(4);
+        header.write(buffer, &mut int_buffer);
+
         let seq = self.unreliable_seq;
 
         Sequence::increment(&mut self.unreliable_seq);
 
-        (seq, buffer)
+        seq
     }
 
     pub fn create_send_buffer(
         &mut self,
-        data: &[u8],
+        mut buffer: BufferPoolRef,
         frag: bool,
         fragment_group_id: u16,
         fragment_id: u8,
@@ -257,17 +298,20 @@ impl Channel {
 
         self.write_header_ack_fiels(&mut header);
 
-        let buffer = header.create_packet(Some(data));
+        let mut int_buffer = IntBuffer::new_at(4);
+        header.write(&mut buffer, &mut int_buffer);
+
         let send_payload = self
             .send_buffer
             .push_send_buffer(self.local_seq, buffer, frag);
 
-        self.local_seq += 1;
+        Sequence::increment(&mut self.local_seq);
 
         send_payload
     }
 
     pub fn get_redelivery_packet(&mut self) -> Vec<Rc<SendPayload>> {
+        todo!("fix the sequence subs. they are not wrap safe");
         let mut packets = Vec::new();
         if self.local_seq > 0 {
             let mut current_seq = self.local_seq - 1;

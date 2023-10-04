@@ -39,9 +39,9 @@ impl Connection {
             );
             self.channel.write_header_ack_fiels(&mut header);
 
-            let buffer = header.create_packet(Some(&packet.buffer.used_data()));
+            //let buffer = header.create_packet(Some(&packet.buffer.used_data()));
 
-            self.channel.send(packet.seq, buffer, send_queue);
+            //self.channel.send(packet.seq, buffer, send_queue);
         }
 
         if self.channel.send_ack {

@@ -6,6 +6,8 @@ use super::{
     array_pool::{ArrayPool, BufferPoolRef},
     fragmentation_manager::{FragmentationManager, FRAGMENT_SIZE},
     header::{FRAG_HEADER_SIZE, HEADER_SIZE},
+    int_buffer::IntBuffer,
+    MAGIC_NUMBER_HEADER,
 };
 
 pub enum SendEvent {
@@ -25,6 +27,8 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
         bail!("packets of this size arent supported");
     }
 
+    let mut int_buffer = IntBuffer::default();
+
     if FragmentationManager::should_fragment(data_len) {
         let chunks = data.chunks(FRAGMENT_SIZE);
 
@@ -32,19 +36,28 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
         let mut fragments = Vec::with_capacity(chunk_count);
 
         for chunk in chunks {
+            int_buffer.reset();
             let buffer_size = chunk.len() + FRAG_HEADER_SIZE + 4;
+
             let mut buffer = ArrayPool::rent(buffer_size);
-            buffer.copy_slice(chunk);
+            int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+            int_buffer.jump(FRAG_HEADER_SIZE);
+            int_buffer.write_slice(chunk, &mut buffer);
+            int_buffer.set_length(&mut buffer);
+
             fragments.push(buffer);
         }
 
         Ok(SendEvent::Fragmented(fragments))
     } else {
         let buffer_size: usize = data_len + HEADER_SIZE + 4;
+
         let mut buffer = ArrayPool::rent(buffer_size);
-        buffer.copy_slice(data);
+        int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+        int_buffer.jump(FRAG_HEADER_SIZE);
+        int_buffer.write_slice(data, &mut buffer);
+        int_buffer.set_length(&mut buffer);
 
         Ok(SendEvent::Single(buffer))
     }
 }
-

@@ -3,15 +3,18 @@ use log::{info, warn};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::borrow::BorrowMut;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::net::MAGIC_NUMBER_HEADER;
 
 use super::array_pool::{ArrayPool, BufferPoolRef};
+use super::send_buffer::SendPayload;
 
 const UDP_SOCKET: Token = Token(0);
 
@@ -23,7 +26,9 @@ pub enum UdpEvent {
 }
 
 pub enum UdpSendEvent {
+    ServerWrapped(Rc<RefCell<BufferPoolRef>>, SocketAddr, u16, bool),
     Server(BufferPoolRef, SocketAddr, u16, bool),
+    ClientWrapped(Rc<RefCell<BufferPoolRef>>, u16, bool),
     Client(BufferPoolRef, u16, bool),
 }
 
@@ -111,6 +116,12 @@ impl Socket {
 
                             while let Some(packet) = self.send_queue.front() {
                                 let send_result = match packet {
+                                    UdpSendEvent::ServerWrapped(ref data, addr, _, _) => {
+                                        self.socket.send_to(data.borrow().used_data(), *addr)
+                                    }
+                                    UdpSendEvent::ClientWrapped(ref data, _, _) => {
+                                        self.socket.send(data.borrow().used_data())
+                                    }
                                     UdpSendEvent::Server(ref data, addr, _, _) => {
                                         self.socket.send_to(data.used_data(), *addr)
                                     }
@@ -124,7 +135,7 @@ impl Socket {
                                         info!("sent packet of size {length}");
 
                                         match packet {
-                                            UdpSendEvent::Server(data, addr, seq, track) => {
+                                            UdpSendEvent::ServerWrapped(_, addr, seq, track) => {
                                                 if *track {
                                                     events.push_front(UdpEvent::SentServer(
                                                         *addr,
@@ -133,7 +144,24 @@ impl Socket {
                                                     ));
                                                 }
                                             }
-                                            UdpSendEvent::Client(data, seq, track) => {
+                                            UdpSendEvent::ClientWrapped(_, seq, track) => {
+                                                if *track {
+                                                    events.push_front(UdpEvent::SentClient(
+                                                        *seq,
+                                                        Instant::now(),
+                                                    ));
+                                                }
+                                            }
+                                            UdpSendEvent::Server(_, addr, seq, track) => {
+                                                if *track {
+                                                    events.push_front(UdpEvent::SentServer(
+                                                        *addr,
+                                                        *seq,
+                                                        Instant::now(),
+                                                    ));
+                                                }
+                                            }
+                                            UdpSendEvent::Client(_, seq, track) => {
                                                 if *track {
                                                     events.push_front(UdpEvent::SentClient(
                                                         *seq,
@@ -173,7 +201,9 @@ impl Socket {
                                             let mut buffer = ArrayPool::rent(data_size);
 
                                             //copy the data
-                                            buffer.copy_slice(&self.buf[4..packet_size]);
+                                            buffer[..data_size]
+                                                .copy_from_slice(&self.buf[4..packet_size]);
+                                            buffer.used = data_size;
 
                                             events
                                                 .push_front(UdpEvent::Read(source_address, buffer));

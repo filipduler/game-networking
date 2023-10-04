@@ -1,4 +1,4 @@
-use std::{rc::Rc, time::Instant};
+use std::{cell::RefCell, rc::Rc, time::Instant};
 
 use bit_field::BitField;
 
@@ -14,7 +14,7 @@ pub struct SendBuffer {
 
 pub struct SendPayload {
     pub seq: u16,
-    pub buffer: BufferPoolRef,
+    pub buffer: Rc<RefCell<BufferPoolRef>>,
     pub frag: bool,
 }
 
@@ -46,7 +46,7 @@ impl SendBufferManager {
         let send_buffer = SendBuffer {
             payload: Rc::new(SendPayload {
                 seq,
-                buffer,
+                buffer: Rc::new(RefCell::new(buffer)),
                 frag,
             }),
             sent_at: None,

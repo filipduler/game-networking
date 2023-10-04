@@ -4,7 +4,11 @@ use anyhow::{anyhow, bail};
 
 use crate::net::PacketType;
 
-use super::{array_pool::{ArrayPool, BufferPoolRef}, int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
+use super::{
+    array_pool::{ArrayPool, BufferPoolRef},
+    int_buffer::IntBuffer,
+    MAGIC_NUMBER_HEADER,
+};
 
 pub const HEADER_SIZE: usize = 17;
 pub const FRAG_HEADER_SIZE: usize = 21;
@@ -57,25 +61,25 @@ impl Header {
         }
     }
 
-    pub fn write(&self, data: &mut [u8], buffer: &mut IntBuffer) -> anyhow::Result<()> {
+    pub fn write(&self, data: &mut [u8], int_buffer: &mut IntBuffer) -> anyhow::Result<()> {
         if data.len() < HEADER_SIZE {
             bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
         }
 
-        buffer.write_u16(self.seq, data);
-        buffer.write_u8(self.packet_type as u8, data);
-        buffer.write_u64(self.session_key, data);
-        buffer.write_u16(self.ack, data);
-        buffer.write_u32(self.ack_bits, data);
+        int_buffer.write_u16(self.seq, data);
+        int_buffer.write_u8(self.packet_type as u8, data);
+        int_buffer.write_u64(self.session_key, data);
+        int_buffer.write_u16(self.ack, data);
+        int_buffer.write_u32(self.ack_bits, data);
 
         if self.packet_type.is_frag_variant() {
             if data.len() < FRAG_HEADER_SIZE {
                 bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
             }
 
-            buffer.write_u16(self.fragment_group_id, data);
-            buffer.write_u8(self.fragment_id, data);
-            buffer.write_u8(self.fragment_size, data);
+            int_buffer.write_u16(self.fragment_group_id, data);
+            int_buffer.write_u8(self.fragment_id, data);
+            int_buffer.write_u8(self.fragment_size, data);
         }
 
         Ok(())
@@ -86,14 +90,14 @@ impl Header {
             bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
         }
 
-        let mut buffer = IntBuffer { index: 0 };
+        let mut int_buffer = IntBuffer { index: 0 };
 
-        let seq = buffer.read_u16(data);
-        let packet_type =
-            PacketType::from_repr(buffer.read_u8(data)).ok_or(anyhow!("invalid packet type"))?;
-        let session_key = buffer.read_u64(data);
-        let ack = buffer.read_u16(data);
-        let ack_bits = buffer.read_u32(data);
+        let seq = int_buffer.read_u16(data);
+        let packet_type = PacketType::from_repr(int_buffer.read_u8(data))
+            .ok_or(anyhow!("invalid packet type"))?;
+        let session_key = int_buffer.read_u64(data);
+        let ack = int_buffer.read_u16(data);
+        let ack_bits = int_buffer.read_u32(data);
 
         let mut fragment_group_id = 0;
         let mut fragment_id = 0;
@@ -104,9 +108,9 @@ impl Header {
                 bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
             }
 
-            fragment_group_id = buffer.read_u16(data);
-            fragment_id = buffer.read_u8(data);
-            fragment_size = buffer.read_u8(data);
+            fragment_group_id = int_buffer.read_u16(data);
+            fragment_id = int_buffer.read_u8(data);
+            fragment_size = int_buffer.read_u8(data);
 
             //fragment id is 0 indexed
             if fragment_id >= fragment_size {
@@ -126,11 +130,8 @@ impl Header {
         })
     }
 
-    pub fn create_packet(
-        &self,
-        data: Option<&[u8]>,
-    ) -> BufferPoolRef{
-        let mut int_buffer = IntBuffer::new_at(0);
+    /*pub fn create_packet(&self, data: Option<&[u8]>) -> BufferPoolRef {
+        let mut int_buffer = IntBuffer::default();
 
         let header_size = self.get_header_size();
 
@@ -144,10 +145,10 @@ impl Header {
         if let Some(d) = data {
             int_buffer.write_slice(d, &mut buffer);
         }
-        buffer.used = packet_length;
+        int_buffer.set_length(&mut buffer);
 
         buffer
-    }
+    }*/
 
     pub fn get_header_size(&self) -> usize {
         if self.packet_type.is_frag_variant() {
