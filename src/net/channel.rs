@@ -67,7 +67,7 @@ impl Channel {
         match send_event {
             SendEvent::Single(mut buffer) => {
                 let payload = self.create_send_buffer(buffer, false, 0, 0, 0);
-                self.send_tracking(payload.seq, payload.buffer.clone(), send_queue)?;
+                self.send_tracking(payload.seq, payload.buffer.clone(), send_queue);
             }
             SendEvent::Fragmented(fragments) => {
                 let fragments = self.fragmentation.split_fragments(fragments)?;
@@ -79,7 +79,7 @@ impl Channel {
                         chunk.fragment_id,
                         fragments.chunk_count,
                     );
-                    self.send_tracking(payload.seq, payload.buffer.clone(), send_queue)?;
+                    self.send_tracking(payload.seq, payload.buffer.clone(), send_queue);
                 }
             }
         };
@@ -95,7 +95,7 @@ impl Channel {
         match send_event {
             SendEvent::Single(mut buffer) => {
                 self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
-                self.send_non_tracking(buffer, send_queue)?;
+                self.send_non_tracking(buffer, send_queue);
             }
             SendEvent::Fragmented(mut fragments) => {
                 let fragments = self.fragmentation.split_fragments(fragments)?;
@@ -107,7 +107,7 @@ impl Channel {
                         chunk.fragment_id,
                         fragments.chunk_count,
                     );
-                    self.send_non_tracking(chunk.buffer, send_queue)?;
+                    self.send_non_tracking(chunk.buffer, send_queue);
                 }
             }
         };
@@ -119,16 +119,14 @@ impl Channel {
         &mut self,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<()> {
-        let empty_arr = &MAGIC_NUMBER_HEADER[0..0];
-
         let mut int_buffer = IntBuffer::default();
         let mut buffer = ArrayPool::rent(4 + HEADER_SIZE);
 
         int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
 
-        let seq = self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
+        self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
 
-        self.send_non_tracking(buffer, send_queue)?;
+        self.send_non_tracking(buffer, send_queue);
 
         Ok(())
     }
@@ -138,28 +136,24 @@ impl Channel {
         seq: u16,
         buffer: Rc<RefCell<BufferPoolRef>>,
         send_queue: &mut VecDeque<UdpSendEvent>,
-    ) -> anyhow::Result<()> {
+    ) {
         send_queue.push_front(match self.mode {
             ChannelType::Client => UdpSendEvent::ClientTracking(buffer, seq),
             ChannelType::Server => UdpSendEvent::ServerTracking(buffer, self.addr, seq),
         });
         self.send_ack = false;
-
-        Ok(())
     }
 
     pub fn send_non_tracking(
         &mut self,
         buffer: BufferPoolRef,
         send_queue: &mut VecDeque<UdpSendEvent>,
-    ) -> anyhow::Result<()> {
+    ) {
         send_queue.push_front(match self.mode {
             ChannelType::Client => UdpSendEvent::Client(buffer),
             ChannelType::Server => UdpSendEvent::Server(buffer, self.addr),
         });
         self.send_ack = false;
-
-        Ok(())
     }
 
     pub fn read<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<ReadPayload<'a>> {
@@ -302,24 +296,18 @@ impl Channel {
     }
 
     pub fn get_redelivery_packet(&mut self) -> Vec<Rc<SendPayload>> {
-        todo!("fix the sequence subs. they are not wrap safe");
         let mut packets = Vec::new();
-        if self.local_seq > 0 {
-            let mut current_seq = self.local_seq - 1;
+        let mut current_seq = self.local_seq.wrapping_sub(1);
 
-            while let Some(send_buffer) = self.send_buffer.buffers.get_mut(current_seq) {
-                if let Some(sent_at) = send_buffer.sent_at {
-                    if sent_at.elapsed() > RESEND_DURATION {
-                        packets.push(send_buffer.payload.clone());
-                        send_buffer.sent_at = None;
-                    }
-                }
-                if current_seq > 0 {
-                    current_seq -= 1;
-                } else {
-                    break;
+        while let Some(send_buffer) = self.send_buffer.buffers.get_mut(current_seq) {
+            if let Some(sent_at) = send_buffer.sent_at {
+                if sent_at.elapsed() > RESEND_DURATION {
+                    packets.push(send_buffer.payload.clone());
+                    send_buffer.sent_at = None;
                 }
             }
+
+            current_seq = current_seq.wrapping_sub(1);
         }
 
         packets
