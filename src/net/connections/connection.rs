@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::{sync::Arc, time::Instant, collections::VecDeque};
 
 use crossbeam_channel::Sender;
 
@@ -30,8 +30,6 @@ impl Connection {
                 identity.addr,
                 identity.session_key,
                 ChannelType::Server,
-                sender,
-                pool_array,
             ),
             identity,
             received_at: Instant::now(),
@@ -40,7 +38,7 @@ impl Connection {
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, send_queue: &mut VecDeque<UdpSendEvent>) {
         let resend_packets = self.channel.get_redelivery_packet();
         for packet in resend_packets {
             let mut header = Header::new(
@@ -51,13 +49,13 @@ impl Connection {
             );
             self.channel.write_header_ack_fiels(&mut header);
 
-            let (payload, length) = header.create_packet(Some(&packet.data), &self.pool_array);
+            let buffer = header.create_packet(Some(&packet.buffer.used_data()));
 
-            self.channel.send(packet.seq, payload, length);
+            self.channel.send(packet.seq, buffer, send_queue);
         }
 
         if self.channel.send_ack {
-            self.channel.send_empty_ack();
+            self.channel.send_empty_ack(send_queue);
         }
     }
 }

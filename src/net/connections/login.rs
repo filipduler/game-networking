@@ -115,7 +115,7 @@ fn send_challange_response(
     buffer.write_u8(PacketType::ChallangeResponse as u8, &mut payload);
     buffer.write_u64(client_salt ^ server_salt, &mut payload);
 
-    sender.send(UdpSendEvent::ClientNonTracking(payload, 21))?;
+    sender.send(UdpSendEvent::Client(payload, 21, false))?;
 
     Ok(())
 }

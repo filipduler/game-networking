@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io,
     net::SocketAddr,
     sync::Arc,
@@ -20,7 +20,7 @@ use super::{
     header::SendType,
     int_buffer::IntBuffer,
     packets::SendEvent,
-    socket::{run_udp_socket, UdpEvent, UdpSendEvent},
+    socket::{UdpEvent, UdpSendEvent, Socket},
     PacketType, MAGIC_NUMBER_HEADER,
 };
 
@@ -31,13 +31,11 @@ pub enum ClientEvent {
 
 pub struct ClientProcess {
     channel: Channel,
+    socket: Socket,
+    send_queue: VecDeque<UdpSendEvent>,
     //API channels
     out_events: Sender<ClientEvent>,
     in_sends: Receiver<(SendEvent, SendType)>,
-    //UDP channels
-    send_tx: Sender<UdpSendEvent>,
-    recv_rx: Receiver<UdpEvent>,
-    array_pool: Arc<ArrayPool>,
 }
 
 impl ClientProcess {
@@ -46,42 +44,24 @@ impl ClientProcess {
         remote_addr: SocketAddr,
         out_events: Sender<ClientEvent>,
         in_sends: Receiver<(SendEvent, SendType)>,
-        array_pool: Arc<ArrayPool>,
     ) -> anyhow::Result<Self> {
-        let (send_tx, send_rx) = crossbeam_channel::unbounded();
-        let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
 
-        let c_array_pool = array_pool.clone();
-        thread::spawn(move || {
-            if let Err(e) = run_udp_socket(
-                local_addr,
-                Some(remote_addr),
-                send_rx,
-                recv_tx,
-                c_array_pool,
-            ) {
-                error!("error while running udp server: {}", e)
-            }
-        });
-
-        let (session_key, client_id) =
+        /*let (session_key, client_id) =
             connections::try_login(&recv_rx, &send_tx).expect("login failed");
 
-        out_events.send(ClientEvent::Connect(client_id))?;
+        out_events.send(ClientEvent::Connect(client_id))?;*/
+        let session_key = 0;
 
         Ok(Self {
             channel: Channel::new(
                 local_addr,
                 session_key,
                 ChannelType::Client,
-                &send_tx,
-                &array_pool,
             ),
+            socket: Socket::connect(local_addr, remote_addr)?,
+            send_queue: VecDeque::new(),
             in_sends,
             out_events,
-            send_tx,
-            recv_rx,
-            array_pool,
         })
     }
 
@@ -89,7 +69,7 @@ impl ClientProcess {
         //to clean up stuff
         let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
 
-        loop {
+        /*loop {
             select! {
                 recv(interval_rx) -> _ => {
                     self.update();
@@ -124,7 +104,9 @@ impl ClientProcess {
                     };
                 }
             }
-        }
+        }*/
+
+        Ok(())
     }
 
     fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
@@ -154,7 +136,7 @@ impl ClientProcess {
 
     fn update(&mut self) {
         if self.channel.send_ack {
-            self.channel.send_empty_ack();
+            self.channel.send_empty_ack(&mut self.send_queue);
         }
     }
 }

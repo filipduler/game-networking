@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail};
 
 use crate::net::PacketType;
 
-use super::{array_pool::ArrayPool, int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
+use super::{array_pool::{ArrayPool, BufferPoolRef}, int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
 pub const HEADER_SIZE: usize = 17;
 pub const FRAG_HEADER_SIZE: usize = 21;
@@ -129,24 +129,24 @@ impl Header {
     pub fn create_packet(
         &self,
         data: Option<&[u8]>,
-        array_pool: &Arc<ArrayPool>,
-    ) -> (Vec<u8>, usize) {
-        let mut buffer = IntBuffer::new_at(0);
+    ) -> BufferPoolRef{
+        let mut int_buffer = IntBuffer::new_at(0);
 
         let header_size = self.get_header_size();
 
         let data_len = if let Some(d) = data { d.len() } else { 0 };
 
         let packet_length = data_len + header_size + 4;
-        let mut payload = array_pool.rent(packet_length);
-        buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut payload);
-        self.write(&mut payload, &mut buffer);
+        let mut buffer = ArrayPool::rent(packet_length);
+        int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+        self.write(&mut buffer, &mut int_buffer);
 
         if let Some(d) = data {
-            buffer.write_slice(d, &mut payload);
+            int_buffer.write_slice(d, &mut buffer);
         }
+        buffer.used = packet_length;
 
-        (payload, packet_length)
+        buffer
     }
 
     pub fn get_header_size(&self) -> usize {

@@ -1,38 +1,43 @@
 use std::{
+    borrow::BorrowMut,
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     ops::{Deref, DerefMut},
 };
 
+use static_init::dynamic;
+
 const SIZE_STEP: usize = 128;
 
-pub struct ArrayPool {
-    pool: parking_lot::Mutex<HashMap<usize, VecDeque<Vec<u8>>>>,
-}
+#[dynamic(drop)]
+static mut POOL: HashMap<usize, VecDeque<Vec<u8>>> = HashMap::new();
+
+pub struct ArrayPool {}
 
 impl ArrayPool {
-    pub fn new() -> Self {
-        Self {
-            pool: parking_lot::Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn rent(&self, size: usize) -> Vec<u8> {
+    pub fn rent(size: usize) -> BufferPoolRef {
         let rounded_size = ArrayPool::round_up_to_multiple_of_step(size);
 
         {
-            let mut pool_map = self.pool.lock();
+            let mut pool_map = POOL.write();
 
             if let Some(pool) = pool_map.get_mut(&rounded_size) {
                 if let Some(data) = pool.pop_front() {
-                    return data;
+                    return BufferPoolRef {
+                        buffer: data,
+                        used: 0,
+                    };
                 }
             }
         }
 
-        vec![0_u8; rounded_size]
+        return BufferPoolRef {
+            buffer: vec![0_u8; rounded_size],
+            used: 0,
+        };
     }
 
-    pub fn free(&self, mut data: Vec<u8>) {
+    pub fn free(mut data: Vec<u8>) {
         //println!("z1 addr {:p}", &data);
 
         let reminder = data.len() % SIZE_STEP;
@@ -41,7 +46,7 @@ impl ArrayPool {
         }
 
         let rounded_size = ArrayPool::round_up_to_multiple_of_step(data.len());
-        let mut pool_map = self.pool.lock();
+        let mut pool_map = POOL.write();
 
         if let Some(pool) = pool_map.get_mut(&rounded_size) {
             pool.push_back(data);
@@ -52,12 +57,6 @@ impl ArrayPool {
         }
     }
 
-    pub fn clone_pooled_vec(&mut self, data: &[u8]) -> Vec<u8> {
-        let mut dest = self.rent(data.len());
-        dest[..data.len()].copy_from_slice(data);
-        dest
-    }
-
     fn round_up_to_multiple_of_step(num: usize) -> usize {
         let remainder = num % SIZE_STEP;
         if remainder == 0 {
@@ -65,5 +64,44 @@ impl ArrayPool {
         } else {
             num + (SIZE_STEP - remainder)
         }
+    }
+}
+
+pub struct BufferPoolRef {
+    buffer: Vec<u8>,
+    pub used: usize,
+}
+
+impl BufferPoolRef {
+    #[inline]
+    pub fn used_data(&self) -> &[u8] {
+        &self.buffer[..self.used]
+    }
+
+    #[inline]
+    pub fn copy_slice(&mut self, src: &[u8]) {
+        self.buffer[..src.len()].copy_from_slice(&src);
+        self.used = src.len();
+    }
+}
+
+impl Deref for BufferPoolRef {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl DerefMut for BufferPoolRef {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffer
+    }
+}
+
+impl Drop for BufferPoolRef {
+    fn drop(&mut self) {
+        let buffer = std::mem::take(&mut self.buffer);
+        ArrayPool::free(buffer);
     }
 }

@@ -16,7 +16,7 @@ use super::{
     channel::ReadPayload,
     connections::ConnectionManager,
     header::SendType,
-    socket::{run_udp_socket, UdpEvent, UdpSendEvent},
+    socket::{UdpEvent, UdpSendEvent},
 };
 
 pub enum ServerEvent {

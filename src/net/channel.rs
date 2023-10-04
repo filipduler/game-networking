@@ -1,10 +1,10 @@
-use std::{net::SocketAddr, rc::Rc, sync::Arc};
+use std::{net::SocketAddr, rc::Rc, sync::Arc, collections::VecDeque};
 
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
 use super::{
-    array_pool::ArrayPool,
+    array_pool::{ArrayPool, BufferPoolRef},
     fragmentation_manager::FragmentationManager,
     header::{Header, SendType, HEADER_SIZE},
     packets::SendEvent,
@@ -38,10 +38,8 @@ pub struct Channel {
     pub send_buffer: SendBufferManager,
     //tracking received packets for preventing emiting duplicate packets
     received_packets: WindowSequenceBuffer<()>,
-    sender: Sender<UdpSendEvent>,
     //fragmentation
     fragmentation: FragmentationManager,
-    array_pool: Arc<ArrayPool>,
 }
 
 impl Channel {
@@ -49,8 +47,6 @@ impl Channel {
         addr: SocketAddr,
         session_key: u64,
         mode: ChannelType,
-        sender: &Sender<UdpSendEvent>,
-        array_pool: &Arc<ArrayPool>,
     ) -> Self {
         Self {
             mode,
@@ -62,15 +58,13 @@ impl Channel {
             send_ack: false,
             send_buffer: SendBufferManager::new(),
             received_packets: WindowSequenceBuffer::with_size(BUFFER_SIZE, BUFFER_WINDOW_SIZE),
-            sender: sender.clone(),
             fragmentation: FragmentationManager::new(),
-            array_pool: array_pool.clone(),
         }
     }
 
     pub fn send_reliable(&mut self, send_event: SendEvent) -> anyhow::Result<()> {
         match send_event {
-            SendEvent::Single(data, length) => {}
+            SendEvent::Single(buffer) => {}
             SendEvent::Fragmented(fragments) => {}
         };
         /*if FragmentationManager::should_fragment(data.len()) {
@@ -114,18 +108,21 @@ impl Channel {
         Ok(())
     }
 
-    pub fn send_empty_ack(&mut self) -> anyhow::Result<()> {
+    pub fn send_empty_ack(&mut self, send_queue: &mut VecDeque<UdpSendEvent>) -> anyhow::Result<()> {
         let empty_arr = &MAGIC_NUMBER_HEADER[0..0];
 
-        let (seq, payload, length) = self.create_unreliable_packet(empty_arr, false, 0, 0, 0);
+        let (seq, buffer) = self.create_unreliable_packet(empty_arr, false, 0, 0, 0);
 
-        self.send(seq, payload, length)?;
+        self.send(seq, buffer, send_queue)?;
 
         Ok(())
     }
 
-    pub fn send(&mut self, seq: u16, data: Vec<u8>, length: usize) -> anyhow::Result<()> {
-        self.sender.send(self.make_send_event(seq, data, length))?;
+    pub fn send(&mut self, seq: u16, buffer: BufferPoolRef, send_queue: &mut VecDeque<UdpSendEvent>) -> anyhow::Result<()> {
+        send_queue.push_front(match self.mode {
+            ChannelType::Client => UdpSendEvent::Client(buffer, seq, true),
+            ChannelType::Server => UdpSendEvent::Server(buffer, self.addr, seq, true),
+        });
         self.send_ack = false;
 
         Ok(())
@@ -224,7 +221,7 @@ impl Channel {
         fragment_group_id: u16,
         fragment_id: u8,
         fragment_size: u8,
-    ) -> (u16, Vec<u8>, usize) {
+    ) -> (u16, BufferPoolRef) {
         let mut header = Header::new(
             self.unreliable_seq,
             self.session_key,
@@ -237,12 +234,12 @@ impl Channel {
 
         self.write_header_ack_fiels(&mut header);
 
-        let (payload, length) = header.create_packet(Some(data), &self.array_pool);
+        let buffer = header.create_packet(Some(data));
         let seq = self.unreliable_seq;
 
         Sequence::increment(&mut self.unreliable_seq);
 
-        (seq, payload, length)
+        (seq, buffer)
     }
 
     pub fn create_send_buffer(
@@ -260,10 +257,10 @@ impl Channel {
 
         self.write_header_ack_fiels(&mut header);
 
-        let (payload, length) = header.create_packet(Some(data), &self.array_pool);
+        let buffer = header.create_packet(Some(data));
         let send_payload = self
             .send_buffer
-            .push_send_buffer(self.local_seq, payload, length, frag);
+            .push_send_buffer(self.local_seq, buffer, frag);
 
         self.local_seq += 1;
 
@@ -300,12 +297,5 @@ impl Channel {
     //least significant bit is the remote_seq - 1 value
     pub fn generate_ack_field(&self) -> u32 {
         self.send_buffer.generate_ack_field(self.remote_seq)
-    }
-
-    fn make_send_event(&self, seq: u16, payload: Vec<u8>, length: usize) -> UdpSendEvent {
-        match self.mode {
-            ChannelType::Client => UdpSendEvent::Client(payload, length, seq),
-            ChannelType::Server => UdpSendEvent::Server(payload, length, self.addr, seq),
-        }
     }
 }

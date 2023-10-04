@@ -3,6 +3,7 @@ use log::{info, warn};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::borrow::BorrowMut;
+use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -10,192 +11,167 @@ use std::time::{Duration, Instant};
 
 use crate::net::MAGIC_NUMBER_HEADER;
 
-use super::array_pool::ArrayPool;
+use super::array_pool::{ArrayPool, BufferPoolRef};
 
-#[derive(PartialEq, Eq)]
+const UDP_SOCKET: Token = Token(0);
+
 pub enum UdpEvent {
     Start,
     SentServer(SocketAddr, u16, Instant),
     SentClient(u16, Instant),
-    Read(SocketAddr, usize, Vec<u8>),
+    Read(SocketAddr, BufferPoolRef),
 }
 
-#[derive(Clone)]
 pub enum UdpSendEvent {
-    Server(Vec<u8>, usize, SocketAddr, u16),
-    ServerNonTracking(Vec<u8>, usize, SocketAddr),
-    Client(Vec<u8>, usize, u16),
-    ClientNonTracking(Vec<u8>, usize),
+    Server(BufferPoolRef, SocketAddr, u16, bool),
+    Client(BufferPoolRef, u16, bool),
 }
 
-// A token to allow us to identify which event is for the `UdpSocket`.
-const UDP_SOCKET: Token = Token(0);
+pub struct Socket {
+    poll: Poll,
+    events: Events,
+    socket: UdpSocket,
+    client_mode: bool,
+    send_queue: VecDeque<UdpSendEvent>,
+    buf: [u8; 1 << 16],
+}
 
-pub fn run_udp_socket(
-    local_addr: SocketAddr,
-    remote_addr_opt: Option<SocketAddr>,
-    send_receiver: Receiver<UdpSendEvent>,
-    event_sender: Sender<UdpEvent>,
-    array_pool: Arc<ArrayPool>,
-) -> anyhow::Result<()> {
-    let mut poll = Poll::new()?;
-    let mut events = Events::with_capacity(1);
+impl Socket {
+    pub fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
+        let mut poll = Poll::new()?;
+        let mut socket = UdpSocket::bind(addr)?;
+        poll.registry()
+            .register(&mut socket, UDP_SOCKET, Interest::READABLE)?;
 
-    let mut socket = UdpSocket::bind(local_addr)?;
-
-    let client_mode = remote_addr_opt.is_some();
-    if let Some(remote_addr) = remote_addr_opt {
-        socket.connect(remote_addr)?;
+        Ok(Self {
+            poll,
+            socket,
+            events: Events::with_capacity(1),
+            client_mode: false,
+            send_queue: VecDeque::new(),
+            buf: [0; 1 << 16],
+        })
     }
 
-    //emit on start event
-    event_sender.send(UdpEvent::Start)?;
+    pub fn connect(addr: SocketAddr, remote_addr: SocketAddr) -> anyhow::Result<Self> {
+        let mut socket = Socket::bind(addr)?;
+        socket.socket.connect(remote_addr)?;
+        socket.client_mode = true;
 
-    poll.registry()
-        .register(&mut socket, UDP_SOCKET, Interest::READABLE)?;
+        Ok(socket)
+    }
 
-    let mut buf = [0; 1 << 16];
+    pub fn process(&mut self, deadline: Instant, events: &mut VecDeque<UdpEvent>) -> anyhow::Result<()> {
+        loop {
+            let timeout = deadline - Instant::now();
 
-    let mut unsent_packet = None::<UdpSendEvent>;
-    let timeout = Duration::from_millis(1);
-
-    // Our event loop.
-    loop {
-        //check if there are and send requests
-        if !send_receiver.is_empty() {
-            poll.registry().reregister(
-                &mut socket,
-                UDP_SOCKET,
-                Interest::READABLE | Interest::WRITABLE,
-            )?;
-        }
-
-        // Poll to check if we have events waiting for us.
-        if let Err(err) = poll.poll(&mut events, Some(timeout)) {
-            if err.kind() == io::ErrorKind::Interrupted {
-                continue;
+            //check if there are and send requests
+            if !self.send_queue.is_empty() {
+                self.poll.registry().reregister(
+                    &mut self.socket,
+                    UDP_SOCKET,
+                    Interest::READABLE | Interest::WRITABLE,
+                )?;
             }
-            return Err(err.into());
-        }
 
-        // Process each event.
-        for event in events.iter() {
-            match event.token() {
-                UDP_SOCKET => {
-                    if event.is_writable() {
-                        let mut send_finished = true;
+            // Poll to check if we have events waiting for us.
+            if let Err(err) = self.poll.poll(&mut self.events, Some(timeout)) {
+                if err.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(err.into());
+            }
 
-                        loop {
-                            let data = if let Some(ref packet) = unsent_packet {
-                                packet.clone()
-                            } else {
-                                match send_receiver.try_recv() {
-                                    Ok(data) => data,
-                                    Err(TryRecvError::Empty) => break,
-                                    Err(TryRecvError::Disconnected) => {
-                                        panic!("sender disconnected!")
+            // Process each event.
+            for event in self.events.iter() {
+                match event.token() {
+                    UDP_SOCKET => {
+                        if event.is_writable() {
+                            let mut send_finished = true;
+
+                            while let Some(packet) = self.send_queue.front() {
+                                
+                                let send_result = match packet {
+                                    UdpSendEvent::Server(ref data, addr, _, _) => {
+                                        self.socket.send_to(data.used_data(), *addr)
                                     }
-                                }
-                            };
-
-                            let send_result = match data {
-                                UdpSendEvent::Server(ref data, length, addr, _) => {
-                                    socket.send_to(&data[..length], addr)
-                                }
-                                UdpSendEvent::ServerNonTracking(ref data, length, addr) => {
-                                    socket.send_to(&data[..length], addr)
-                                }
-                                UdpSendEvent::Client(ref data, length, _) => {
-                                    socket.send(&data[..length])
-                                }
-                                UdpSendEvent::ClientNonTracking(ref data, length) => {
-                                    socket.send(&data[..length])
-                                }
-                            };
-
-                            match send_result {
-                                Ok(length) => {
-                                    info!("sent packet of size {length} on {local_addr}");
-
-                                    let event = match data {
-                                        UdpSendEvent::Server(data, _, addr, seq) => {
-                                            array_pool.free(data);
-                                            Some(UdpEvent::SentServer(addr, seq, Instant::now()))
-                                        }
-                                        UdpSendEvent::Client(data, _, seq) => {
-                                            array_pool.free(data);
-                                            Some(UdpEvent::SentClient(seq, Instant::now()))
-                                        }
-                                        UdpSendEvent::ServerNonTracking(data, _, _) => {
-                                            array_pool.free(data);
-                                            None
-                                        }
-                                        UdpSendEvent::ClientNonTracking(data, _) => {
-                                            array_pool.free(data);
-                                            None
-                                        }
-                                    };
-
-                                    if let Some(event) = event {
-                                        event_sender.send(event)?;
+                                    UdpSendEvent::Client(ref data, _, _) => {
+                                        self.socket.send(data.used_data())
                                     }
-                                }
-                                Err(ref e) if would_block(e) => {
-                                    //send would block so we store the last packet and try again
-                                    unsent_packet = Some(data);
-                                    send_finished = false;
-                                    break;
-                                }
-                                Err(e) => {
-                                    //no point of returning the data to the pool.. program crashed anyway..
+                                };
 
-                                    return Err(e.into());
-                                }
-                                _ => {}
-                            };
-                        }
+                                match send_result {
+                                    Ok(length) => {
+                                        info!("sent packet of size {length}");
 
-                        //if we sent all of the packets in the channel we can switch back to readable events
-                        if send_finished {
-                            poll.registry().reregister(
-                                &mut socket,
-                                UDP_SOCKET,
-                                Interest::READABLE,
-                            )?;
-                        }
-                    } else if event.is_readable() {
-                        // In this loop we receive all packets queued for the socket.
-                        loop {
-                            match socket.recv_from(&mut buf) {
-                                Ok((packet_size, source_address)) => {
-                                    if packet_size >= 4 && buf[..4] == MAGIC_NUMBER_HEADER {
-                                        info!(
-                                            "received packet of size {packet_size} on {local_addr}"
-                                        );
-                                        let data_size = packet_size - 4;
-                                        let mut pooled_vec = array_pool.rent(data_size);
-
-                                        //copy the data
-                                        pooled_vec[..data_size]
-                                            .copy_from_slice(&buf[4..packet_size]);
-
-                                        event_sender.send(UdpEvent::Read(
-                                            source_address,
-                                            data_size,
-                                            pooled_vec,
-                                        ))?;
+                                        match packet {
+                                            UdpSendEvent::Server(data,addr, seq, track) => {
+                                                if *track {
+                                                    events.push_front(UdpEvent::SentServer(
+                                                        *addr,
+                                                        *seq,
+                                                        Instant::now(),
+                                                    ));
+                                                }
+                                                
+                                            }
+                                            UdpSendEvent::Client(data, seq, track) => {
+                                                if *track {
+                                                    events.push_front(UdpEvent::SentClient(*seq, Instant::now()));
+                                                }  
+                                            }
+                                        };
                                     }
-                                }
-                                Err(ref e) if would_block(e) => break,
-                                Err(e) => {
-                                    return Err(e.into());
+                                    Err(ref e) if would_block(e) => {
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        return Err(e.into());
+                                    }
+                                    _ => {}
+                                };
+                            }
+
+                            //if we sent all of the packets in the channel we can switch back to readable events
+                            if self.send_queue.is_empty() {
+                                self.poll.registry().reregister(
+                                    &mut self.socket,
+                                    UDP_SOCKET,
+                                    Interest::READABLE,
+                                )?;
+                            }
+                        } else if event.is_readable() {
+                            // In this loop we receive all packets queued for the socket.
+                            loop {
+                                match self.socket.recv_from(&mut self.buf) {
+                                    Ok((packet_size, source_address)) => {
+                                        if packet_size >= 4 && self.buf[..4] == MAGIC_NUMBER_HEADER {
+                                            info!(
+                                        "received packet of size {packet_size}"
+                                    );
+                                            let data_size = packet_size - 4;
+                                            let mut buffer = ArrayPool::rent(data_size);
+
+                                            //copy the data
+                                            buffer.copy_slice(&self.buf[4..packet_size]);
+
+                                            events.push_front(UdpEvent::Read(
+                                                source_address,
+                                                buffer,
+                                            ));
+                                        }
+                                    }
+                                    Err(ref e) if would_block(e) => break,
+                                    Err(e) => {
+                                        return Err(e.into());
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                _ => {
-                    warn!("Got event for unexpected token: {:?}", event);
+                    _ => {
+                        warn!("Got event for unexpected token: {:?}", event);
+                    }
                 }
             }
         }

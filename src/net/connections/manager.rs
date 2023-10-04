@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{borrow::BorrowMut, collections::{HashMap, VecDeque}, net::SocketAddr, sync::Arc};
 
 use anyhow::bail;
 use crossbeam_channel::Sender;
@@ -113,9 +113,9 @@ impl ConnectionManager {
         None
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, send_queue: &mut VecDeque<UdpSendEvent>) {
         for connection in self.connections.iter_mut().flatten() {
-            connection.update();
+            connection.update(send_queue);
         }
     }
 

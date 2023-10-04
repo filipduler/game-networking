@@ -4,6 +4,8 @@ use bit_field::BitField;
 
 use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
+use super::array_pool::BufferPoolRef;
+
 pub struct SendBuffer {
     pub payload: Rc<SendPayload>,
     pub sent_at: Option<Instant>,
@@ -12,8 +14,7 @@ pub struct SendBuffer {
 
 pub struct SendPayload {
     pub seq: u16,
-    pub data: Vec<u8>,
-    pub length: usize,
+    pub buffer: BufferPoolRef,
     pub frag: bool,
 }
 
@@ -39,15 +40,13 @@ impl SendBufferManager {
     pub fn push_send_buffer(
         &mut self,
         seq: u16,
-        data: Vec<u8>,
-        length: usize,
+        buffer: BufferPoolRef,
         frag: bool,
     ) -> Rc<SendPayload> {
         let send_buffer = SendBuffer {
             payload: Rc::new(SendPayload {
                 seq,
-                data,
-                length,
+                buffer,
                 frag,
             }),
             sent_at: None,
