@@ -11,6 +11,7 @@ mod fragmentation_manager;
 pub mod header;
 mod int_buffer;
 mod packets;
+mod rtt_tracker;
 mod send_buffer;
 mod sequence;
 pub mod server;
@@ -23,14 +24,12 @@ pub const BUFFER_SIZE: u16 = 1024;
 //always has to be less than BUFFER SIZE
 pub const BUFFER_WINDOW_SIZE: u16 = 256;
 
-pub const RESEND_DURATION: Duration = Duration::from_millis(100);
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, FromRepr)]
 pub enum PacketType {
     ConnectionRequest = 1,
     Challenge = 2,
-    ChallangeResponse = 3,
+    ChallengeResponse = 3,
     ConnectionAccepted = 4,
     PayloadReliableFrag = 5,
     PayloadReliable = 6,

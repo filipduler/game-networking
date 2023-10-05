@@ -1,4 +1,6 @@
-use std::{cell::RefCell, collections::VecDeque, net::SocketAddr, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell, collections::VecDeque, net::SocketAddr, rc::Rc, sync::Arc, time::Instant,
+};
 
 use anyhow::bail;
 use crossbeam_channel::Sender;
@@ -12,7 +14,7 @@ use super::{
     send_buffer::{SendBufferManager, SendPayload},
     sequence::{Sequence, SequenceBuffer, WindowSequenceBuffer},
     socket::UdpSendEvent,
-    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER, RESEND_DURATION,
+    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,7 +39,7 @@ pub struct Channel {
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
-    //tracking received packets for preventing emiting duplicate packets
+    //tracking received packets for preventing emitting duplicate packets
     received_packets: WindowSequenceBuffer<()>,
     //fragmentation
     fragmentation: FragmentationManager,
@@ -156,7 +158,11 @@ impl Channel {
         self.send_ack = false;
     }
 
-    pub fn read<'a>(&mut self, data: &'a [u8]) -> anyhow::Result<ReadPayload<'a>> {
+    pub fn read<'a>(
+        &mut self,
+        data: &'a [u8],
+        received_at: &Instant,
+    ) -> anyhow::Result<ReadPayload<'a>> {
         if data.len() < HEADER_SIZE {
             return Ok(ReadPayload::None);
         }
@@ -179,11 +185,11 @@ impl Channel {
                 let mut new_packet = false;
 
                 //always mark the acks
-                self.mark_sent_packets(header.ack, header.ack_bits);
+                self.mark_sent_packets(header.ack, header.ack_bits, received_at);
 
                 //if the sequence was not registered yet its a new packet
                 if self.update_remote_seq(header.seq) || self.received_packets.is_none(header.seq) {
-                    //NOTE: packet is new and we dont have to check if its a duplicate
+                    //NOTE: packet is new and we don't have to check if its a duplicate
                     new_packet = true;
                 }
 
@@ -213,7 +219,7 @@ impl Channel {
                     todo!()
                 }
 
-                self.mark_sent_packets(header.ack, header.ack_bits);
+                self.mark_sent_packets(header.ack, header.ack_bits, received_at);
                 if payload_size > 0 {
                     return Ok(ReadPayload::Ref(
                         &data[header.get_header_size()..data.len()],
@@ -237,7 +243,7 @@ impl Channel {
         false
     }
 
-    pub fn write_header_ack_fiels(&self, header: &mut Header) {
+    pub fn write_header_ack_fields(&self, header: &mut Header) {
         header.ack = self.remote_seq;
         header.ack_bits = self.generate_ack_field();
     }
@@ -260,7 +266,7 @@ impl Channel {
         header.fragment_id = fragment_id;
         header.fragment_size = fragment_size;
 
-        self.write_header_ack_fiels(&mut header);
+        self.write_header_ack_fields(&mut header);
 
         let mut int_buffer = IntBuffer::new_at(4);
         header.write(buffer, &mut int_buffer);
@@ -281,7 +287,7 @@ impl Channel {
         header.fragment_id = fragment_id;
         header.fragment_size = fragment_size;
 
-        self.write_header_ack_fiels(&mut header);
+        self.write_header_ack_fields(&mut header);
 
         let mut int_buffer = IntBuffer::new_at(4);
         header.write(&mut buffer, &mut int_buffer);
@@ -301,7 +307,7 @@ impl Channel {
 
         while let Some(send_buffer) = self.send_buffer.buffers.get_mut(current_seq) {
             if let Some(sent_at) = send_buffer.sent_at {
-                if sent_at.elapsed() > RESEND_DURATION {
+                if sent_at.elapsed() > self.send_buffer.trr_tracker.recommended_max_rtt() {
                     packets.push(send_buffer.payload.clone());
                     send_buffer.sent_at = None;
                 }
@@ -313,8 +319,9 @@ impl Channel {
         packets
     }
 
-    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32) {
-        self.send_buffer.mark_sent_packets(ack, ack_bitfield)
+    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
+        self.send_buffer
+            .mark_sent_packets(ack, ack_bitfield, received_at)
     }
 
     //least significant bit is the remote_seq - 1 value

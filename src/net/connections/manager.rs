@@ -64,10 +64,10 @@ impl ConnectionManager {
         //check if theres already a connect in process
         //if let Some(identity) = self.connect_requests.get_mut(addr) {
         if let Some(identity) = self.connect_requests.get(addr) {
-            if state == PacketType::ChallangeResponse
+            if state == PacketType::ChallengeResponse
                 && identity.session_key == int_buffer.read_u64(data)
             {
-                return Ok(self.finish_challange(addr));
+                return Ok(self.finish_challenge(addr));
             }
         } else {
             let client_salt = int_buffer.read_u64(data);
@@ -75,7 +75,7 @@ impl ConnectionManager {
 
             self.connect_requests.insert(*addr, identity.clone());
 
-            //generate challange packet
+            //generate challenge packet
             let mut buffer = ArrayPool::rent(21);
             int_buffer.reset();
 
@@ -90,7 +90,7 @@ impl ConnectionManager {
         Ok(None)
     }
 
-    fn finish_challange(&mut self, addr: &SocketAddr) -> Option<BufferPoolRef> {
+    fn finish_challenge(&mut self, addr: &SocketAddr) -> Option<BufferPoolRef> {
         if let Some(connection_index) = self.get_free_slot_index() {
             //remove the identity from the connect requests
             if let Some(identity) = self.connect_requests.remove(addr) {

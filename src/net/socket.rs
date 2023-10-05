@@ -21,7 +21,7 @@ const UDP_SOCKET: Token = Token(0);
 pub enum UdpEvent {
     SentServer(SocketAddr, u16, Instant),
     SentClient(u16, Instant),
-    Read(SocketAddr, BufferPoolRef),
+    Read(SocketAddr, BufferPoolRef, Instant),
 }
 
 pub enum UdpSendEvent {
@@ -182,7 +182,10 @@ impl Socket {
                                     Ok((packet_size, source_address)) => {
                                         if packet_size >= 4 && self.buf[..4] == MAGIC_NUMBER_HEADER
                                         {
-                                            info!("received packet of size {packet_size} on {}", self.addr);
+                                            info!(
+                                                "received packet of size {packet_size} on {}",
+                                                self.addr
+                                            );
                                             let data_size = packet_size - 4;
                                             let mut buffer = ArrayPool::rent(data_size);
 
@@ -191,8 +194,11 @@ impl Socket {
                                                 .copy_from_slice(&self.buf[4..packet_size]);
                                             buffer.used = data_size;
 
-                                            events
-                                                .push_front(UdpEvent::Read(source_address, buffer));
+                                            events.push_front(UdpEvent::Read(
+                                                source_address,
+                                                buffer,
+                                                Instant::now(),
+                                            ));
 
                                             if max_events <= events.len() {
                                                 return Ok(());
@@ -213,7 +219,7 @@ impl Socket {
                 }
             }
         }
-        
+
         Ok(())
     }
 }

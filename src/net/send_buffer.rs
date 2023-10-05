@@ -4,7 +4,7 @@ use bit_field::BitField;
 
 use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
-use super::array_pool::BufferPoolRef;
+use super::{array_pool::BufferPoolRef, rtt_tracker::RttTracker};
 
 pub struct SendBuffer {
     pub payload: Rc<SendPayload>,
@@ -21,6 +21,7 @@ pub struct SendPayload {
 pub struct SendBufferManager {
     pub buffers: SequenceBuffer<SendBuffer>,
     pub received_acks: SequenceBuffer<bool>,
+    pub trr_tracker: RttTracker,
 }
 
 impl SendBufferManager {
@@ -28,6 +29,7 @@ impl SendBufferManager {
         SendBufferManager {
             buffers: SequenceBuffer::with_size(BUFFER_SIZE),
             received_acks: SequenceBuffer::with_size(BUFFER_SIZE),
+            trr_tracker: RttTracker::new(),
         }
     }
 
@@ -60,19 +62,29 @@ impl SendBufferManager {
         payload
     }
 
-    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32) {
-        self.ack_packet(ack);
+    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
+        //only record the latest one..
+        self.ack_packet(ack, Some(received_at));
 
         for bit_pos in 0..32_u16 {
             if ack_bitfield.get_bit(bit_pos as usize) {
                 let seq = ack.wrapping_sub(bit_pos).wrapping_sub(1);
-                self.ack_packet(seq);
+                self.ack_packet(seq, None);
             }
         }
     }
 
-    fn ack_packet(&mut self, ack: u16) {
-        self.buffers.remove(ack);
+    fn ack_packet(&mut self, ack: u16, received_at: Option<&Instant>) {
+        if let Some(received_at) = received_at {
+            if let Some(buffer) = self.buffers.take(ack) {
+                if let Some(sent_at) = buffer.sent_at {
+                    self.trr_tracker.record_rtt(sent_at, *received_at);
+                }
+            }
+        } else {
+            self.buffers.remove(ack);
+        }
+
         self.received_acks.insert(ack, true);
     }
 
@@ -109,7 +121,7 @@ mod tests {
         ack_bitfield.set_bit(15, true);
         ack_bitfield.set_bit(31, true);
 
-        send_buffer.mark_sent_packets(5, ack_bitfield);
+        send_buffer.mark_sent_packets(5, ack_bitfield, &Instant::now());
 
         assert!(*send_buffer
             .received_acks

@@ -37,7 +37,7 @@ impl Connection {
                 SendType::Reliable,
                 packet.frag,
             );
-            self.channel.write_header_ack_fiels(&mut header);
+            self.channel.write_header_ack_fields(&mut header);
 
             //let buffer = header.create_packet(Some(&packet.buffer.used_data()));
 

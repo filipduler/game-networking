@@ -70,7 +70,7 @@ impl ClientProcess {
                 recv(interval_rx) -> _ => {
                     self.update();
                 }
-                //send requests coming fron the API
+                //send requests coming from the API
                 recv(self.in_sends) -> msg_result => {
                     //prioritize update
                     if interval_rx.try_recv().is_ok() {
@@ -90,7 +90,7 @@ impl ClientProcess {
                     if !self.send_queue.is_empty() {
                         self.socket.enqueue_send_events(&mut self.send_queue);
                     }
-                    
+
                     self.socket.process(
                         Instant::now() + Duration::from_millis(10),
                         None,
@@ -99,8 +99,8 @@ impl ClientProcess {
 
                     while let Some(udp_event) = udp_events.pop_back() {
                         match udp_event {
-                            UdpEvent::Read(addr, buffer) => {
-                                if let Err(ref e) = self.process_read_request(addr, buffer.used_data()) {
+                            UdpEvent::Read(addr, buffer, received_at) => {
+                                if let Err(ref e) = self.process_read_request(addr, buffer.used_data(), &received_at) {
                                     error!("failed processing read request: {e}");
                                 };
                             }
@@ -117,8 +117,13 @@ impl ClientProcess {
         Ok(())
     }
 
-    fn process_read_request(&mut self, addr: SocketAddr, data: &[u8]) -> anyhow::Result<()> {
-        match self.channel.read(data)? {
+    fn process_read_request(
+        &mut self,
+        addr: SocketAddr,
+        data: &[u8],
+        received_at: &Instant,
+    ) -> anyhow::Result<()> {
+        match self.channel.read(data, received_at)? {
             ReadPayload::Ref(payload) => self
                 .out_events
                 .send(ClientEvent::Receive(payload.to_vec()))?,

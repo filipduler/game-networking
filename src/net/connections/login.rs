@@ -32,11 +32,11 @@ pub fn try_login(socket: &mut Socket) -> anyhow::Result<(u64, u32)> {
     //send connection request
     send_connection_request(client_salt, socket)?;
 
-    //wait for the challange
-    let server_salt = read_challange(client_salt, socket, timeout)?;
+    //wait for the challenge
+    let server_salt = read_challenge(client_salt, socket, timeout)?;
 
-    //send the challange response
-    send_challange_response(client_salt, server_salt, socket)?;
+    //send the challenge response
+    send_challenge_response(client_salt, server_salt, socket)?;
 
     //wait for accept or deny response
     let client_id = read_connection_status(socket, timeout)?;
@@ -58,8 +58,8 @@ fn send_connection_request(client_salt: u64, socket: &mut Socket) -> anyhow::Res
     Ok(())
 }
 
-fn read_challange(client_salt: u64, socket: &mut Socket, timeout: Duration) -> anyhow::Result<u64> {
-    let buffer = if let UdpEvent::Read(_, buffer) = read_udp_event(socket, timeout)? {
+fn read_challenge(client_salt: u64, socket: &mut Socket, timeout: Duration) -> anyhow::Result<u64> {
+    let buffer = if let UdpEvent::Read(_, buffer, _) = read_udp_event(socket, timeout)? {
         buffer
     } else {
         bail!("unexpected event");
@@ -82,7 +82,7 @@ fn read_challange(client_salt: u64, socket: &mut Socket, timeout: Duration) -> a
 }
 
 fn read_connection_status(socket: &mut Socket, timeout: Duration) -> anyhow::Result<u32> {
-    let buffer = if let UdpEvent::Read(_, buffer) = read_udp_event(socket, timeout)? {
+    let buffer = if let UdpEvent::Read(_, buffer, _) = read_udp_event(socket, timeout)? {
         buffer
     } else {
         bail!("unexpected event");
@@ -103,7 +103,7 @@ fn read_connection_status(socket: &mut Socket, timeout: Duration) -> anyhow::Res
     bail!("connection not accepted");
 }
 
-fn send_challange_response(
+fn send_challenge_response(
     client_salt: u64,
     server_salt: u64,
     socket: &mut Socket,
@@ -113,7 +113,7 @@ fn send_challange_response(
     let mut buffer = ArrayPool::rent(21);
 
     int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
-    int_buffer.write_u8(PacketType::ChallangeResponse as u8, &mut buffer);
+    int_buffer.write_u8(PacketType::ChallengeResponse as u8, &mut buffer);
     int_buffer.write_u64(client_salt ^ server_salt, &mut buffer);
 
     socket.enqueue_send_event(UdpSendEvent::Client(buffer));
