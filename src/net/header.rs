@@ -63,7 +63,7 @@ impl Header {
 
     pub fn write(&self, data: &mut [u8], int_buffer: &mut IntBuffer) -> anyhow::Result<()> {
         if data.len() < HEADER_SIZE {
-            bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
+            bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
         }
 
         int_buffer.write_u16(self.seq, data);
@@ -74,7 +74,7 @@ impl Header {
 
         if self.packet_type.is_frag_variant() {
             if data.len() < FRAG_HEADER_SIZE {
-                bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
+                bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
             }
 
             int_buffer.write_u16(self.fragment_group_id, data);
@@ -87,7 +87,7 @@ impl Header {
 
     pub fn read(data: &[u8]) -> anyhow::Result<Header> {
         if data.len() < HEADER_SIZE {
-            bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
+            bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
         }
 
         let mut int_buffer = IntBuffer { index: 0 };
@@ -105,7 +105,7 @@ impl Header {
 
         if packet_type.is_frag_variant() {
             if data.len() < FRAG_HEADER_SIZE {
-                bail!("data length needs to be atleast bytes {HEADER_SIZE} long.");
+                bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
             }
 
             fragment_group_id = int_buffer.read_u16(data);
@@ -129,26 +129,6 @@ impl Header {
             fragment_size,
         })
     }
-
-    /*pub fn create_packet(&self, data: Option<&[u8]>) -> BufferPoolRef {
-        let mut int_buffer = IntBuffer::default();
-
-        let header_size = self.get_header_size();
-
-        let data_len = if let Some(d) = data { d.len() } else { 0 };
-
-        let packet_length = data_len + header_size + 4;
-        let mut buffer = ArrayPool::rent(packet_length);
-        int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
-        self.write(&mut buffer, &mut int_buffer);
-
-        if let Some(d) = data {
-            int_buffer.write_slice(d, &mut buffer);
-        }
-        int_buffer.set_length(&mut buffer);
-
-        buffer
-    }*/
 
     pub fn get_header_size(&self) -> usize {
         if self.packet_type.is_frag_variant() {

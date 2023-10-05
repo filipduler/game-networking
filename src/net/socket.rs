@@ -75,9 +75,8 @@ impl Socket {
         if self.send_queue.is_empty() {
             std::mem::swap(send_events, &mut self.send_queue);
         } else {
-            //TODO: test this
             while let Some(packet) = send_events.pop_back() {
-                self.send_queue.push_back(packet);
+                self.send_queue.push_front(packet);
             }
         }
     }
@@ -117,7 +116,7 @@ impl Socket {
                         if event.is_writable() {
                             let mut send_finished = true;
 
-                            while let Some(packet) = self.send_queue.pop_front() {
+                            while let Some(packet) = self.send_queue.pop_back() {
                                 let send_result = match packet {
                                     UdpSendEvent::ServerTracking(ref data, addr, _) => {
                                         self.socket.send_to(data.borrow().used_data(), addr)
@@ -156,7 +155,7 @@ impl Socket {
                                     }
                                     Err(ref e) if would_block(e) => {
                                         //set the message back in the queue
-                                        self.send_queue.push_front(packet);
+                                        self.send_queue.push_back(packet);
 
                                         break;
                                     }

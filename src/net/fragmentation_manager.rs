@@ -37,6 +37,10 @@ impl FragmentationManager {
     }
 
     pub fn split_fragments(&mut self, chunks: Vec<BufferPoolRef>) -> anyhow::Result<Fragments> {
+        if chunks.len() > u8::MAX as usize {
+            bail!("cannot create a fragmented message from more than 255 chunks");
+        }
+
         let chunk_count = chunks.len() as u8;
 
         let mut fragments = Fragments {
@@ -66,7 +70,7 @@ impl FragmentationManager {
             bail!("empty fragment with size 0")
         }
 
-        //insert the fragment buffer if it doesnt exist yet
+        //insert the fragment buffer if it doesn't exist yet
         if self.fragments.is_none(header.fragment_group_id) {
             self.fragments.insert(
                 header.fragment_group_id,
@@ -178,6 +182,8 @@ pub struct FragmentChunk {
 mod tests {
     use std::thread;
 
+    use crate::net::array_pool::ArrayPool;
+
     use super::*;
 
     #[test]
@@ -287,17 +293,26 @@ mod tests {
     #[test]
     fn max_packet_size() {
         let mut fragment_manager: FragmentationManager = FragmentationManager::new();
-        let data = [0_u8; MAX_FRAGMENT_SIZE];
-        //let frags_result = fragment_manager.split_fragments(&data);
-        //assert!(frags_result.is_ok());
 
-        //assert_eq!(frags_result.unwrap().chunk_count, u8::MAX);
+        let mut frags = Vec::with_capacity(u8::MAX as usize);
+        for chunk in 0..u8::MAX {
+            frags.push(ArrayPool::rent(FRAGMENT_SIZE));
+        }
+
+        let frags_result = fragment_manager.split_fragments(frags);
+        assert!(frags_result.is_ok());
+
+        assert_eq!(frags_result.unwrap().chunk_count, u8::MAX);
     }
 
     #[test]
     fn too_big_packet() {
         let mut fragment_manager = FragmentationManager::new();
-        let data = [0_u8; MAX_FRAGMENT_SIZE + 1];
-        //assert!(fragment_manager.split_fragments(&data).is_err());
+        let mut frags = Vec::with_capacity(u8::MAX as usize + 1);
+        for chunk in 0..u8::MAX as usize + 1 {
+            frags.push(ArrayPool::rent(FRAGMENT_SIZE));
+        }
+
+        assert!(fragment_manager.split_fragments(frags).is_err());
     }
 }

@@ -11,7 +11,7 @@ use static_init::dynamic;
 const SIZE_STEP: usize = 128;
 
 #[dynamic(drop)]
-static mut POOL: HashMap<usize, VecDeque<Vec<u8>>> = HashMap::new();
+static mut POOL: HashMap<usize, Vec<Vec<u8>>> = HashMap::new();
 
 pub struct ArrayPool {}
 
@@ -23,7 +23,7 @@ impl ArrayPool {
             let mut pool_map = POOL.write();
 
             if let Some(pool) = pool_map.get_mut(&rounded_size) {
-                if let Some(data) = pool.pop_front() {
+                if let Some(data) = pool.pop() {
                     return BufferPoolRef {
                         buffer: data,
                         used: size,
@@ -41,19 +41,18 @@ impl ArrayPool {
     pub fn free(mut data: Vec<u8>) {
         //info!("Freeing data of length {} at addr {:p}", data.len(), &data);
 
-        let reminder = data.len() % SIZE_STEP;
-        if reminder != 0 {
-            data.resize(ArrayPool::round_up_to_multiple_of_step(data.len()), 0);
-        }
+        assert!(
+            data.len() % SIZE_STEP == 0,
+            "data length has to be a multiple of {SIZE_STEP}"
+        );
 
         let rounded_size = ArrayPool::round_up_to_multiple_of_step(data.len());
         let mut pool_map = POOL.write();
 
         if let Some(pool) = pool_map.get_mut(&rounded_size) {
-            pool.push_back(data);
+            pool.push(data);
         } else {
-            let mut queue = VecDeque::with_capacity(1);
-            queue.push_back(data);
+            let queue = vec![data];
             pool_map.insert(rounded_size, queue);
         }
     }
@@ -99,4 +98,44 @@ impl Drop for BufferPoolRef {
         let buffer = std::mem::take(&mut self.buffer);
         ArrayPool::free(buffer);
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use crate::net::array_pool::ArrayPool;
+
+    use super::*;
+
+    #[test]
+    fn rent_and_free() {
+        {
+            let buffer = ArrayPool::rent(SIZE_STEP);
+        }
+        assert_eq!(POOL.read().get(&SIZE_STEP).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn rounding_requested_size_to_multiple() {
+        let buffer = ArrayPool::rent(SIZE_STEP - 1);
+        assert_eq!(buffer.buffer.len(), SIZE_STEP);
+    }
+
+    /*#[test]
+    fn speed_test() {
+        for i in 0..100000 {
+            ArrayPool::free(vec![0_u8; SIZE_STEP]);
+        }
+        let mut v = Vec::with_capacity(100000);
+        let start = Instant::now();
+        for i in 0..100000 {
+            v.push(ArrayPool::rent(SIZE_STEP));
+        }
+        println!("elapsed {}", start.elapsed().as_millis());
+        assert!(start.elapsed() < Duration::from_millis(50));
+    }*/
 }

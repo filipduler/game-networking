@@ -15,7 +15,7 @@ pub enum SendEvent {
     Fragmented(Vec<(BufferPoolRef)>),
 }
 
-//prepare the appropriate sized byte arrays so we dont have to reallocate and copy the data from this point on
+//prepare the appropriate sized byte arrays so we don't have to reallocate and copy the data from this point on
 pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
     let data_len = data.len();
 
@@ -24,7 +24,7 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
     }
 
     if FragmentationManager::exceeds_max_length(data_len) {
-        bail!("packets of this size arent supported");
+        bail!("packets of this size aren't supported");
     }
 
     let mut int_buffer = IntBuffer::default();
