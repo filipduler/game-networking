@@ -18,20 +18,20 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn connect(local_addr: SocketAddr, remote_addr: SocketAddr) -> io::Result<Self> {
+    pub fn connect(addr: SocketAddr, remote_addr: SocketAddr) -> io::Result<Self> {
         let (send_tx, send_rx) = crossbeam_channel::unbounded();
         let (recv_tx, recv_rx) = crossbeam_channel::unbounded();
 
-        thread::spawn(move || {
-            match ClientProcess::connect(local_addr, remote_addr, send_tx, recv_rx) {
+        thread::spawn(
+            move || match ClientProcess::connect(addr, remote_addr, send_tx, recv_rx) {
                 Ok(mut process) => {
                     if let Err(e) = process.start() {
                         error!("error while running starting: {}", e)
                     }
                 }
                 Err(e) => error!("error while binding process: {}", e),
-            }
-        });
+            },
+        );
 
         //wait for the start event
         match send_rx.recv_timeout(Duration::from_secs(50)) {
