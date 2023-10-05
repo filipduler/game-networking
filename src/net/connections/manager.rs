@@ -77,13 +77,12 @@ impl ConnectionManager {
 
             //generate challange packet
             let mut buffer = ArrayPool::rent(21);
-            int_buffer.index = 0;
+            int_buffer.reset();
 
             int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
             int_buffer.write_u8(PacketType::Challenge as u8, &mut buffer);
             int_buffer.write_u64(client_salt, &mut buffer);
             int_buffer.write_u64(identity.server_salt, &mut buffer);
-            int_buffer.set_length(&mut buffer);
 
             return Ok(Some(buffer));
         }

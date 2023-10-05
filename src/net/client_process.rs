@@ -87,6 +87,10 @@ impl ClientProcess {
                 }
                 //incoming read packets
                 default => {
+                    if !self.send_queue.is_empty() {
+                        self.socket.enqueue_send_events(&mut self.send_queue);
+                    }
+                    
                     self.socket.process(
                         Instant::now() + Duration::from_millis(10),
                         None,

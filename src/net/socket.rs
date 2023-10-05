@@ -32,6 +32,7 @@ pub enum UdpSendEvent {
 }
 
 pub struct Socket {
+    addr: SocketAddr,
     poll: Poll,
     events: Events,
     socket: UdpSocket,
@@ -48,6 +49,7 @@ impl Socket {
             .register(&mut socket, UDP_SOCKET, Interest::READABLE)?;
 
         Ok(Self {
+            addr,
             poll,
             socket,
             events: Events::with_capacity(1),
@@ -86,6 +88,8 @@ impl Socket {
         max_events: Option<usize>,
         events: &mut VecDeque<UdpEvent>,
     ) -> anyhow::Result<()> {
+        let max_events = max_events.unwrap_or(usize::MAX);
+
         while Instant::now() < deadline {
             let timeout = deadline - Instant::now();
 
@@ -113,16 +117,16 @@ impl Socket {
                         if event.is_writable() {
                             let mut send_finished = true;
 
-                            while let Some(packet) = self.send_queue.front() {
+                            while let Some(packet) = self.send_queue.pop_front() {
                                 let send_result = match packet {
                                     UdpSendEvent::ServerTracking(ref data, addr, _) => {
-                                        self.socket.send_to(data.borrow().used_data(), *addr)
+                                        self.socket.send_to(data.borrow().used_data(), addr)
                                     }
                                     UdpSendEvent::ClientTracking(ref data, _) => {
                                         self.socket.send(data.borrow().used_data())
                                     }
                                     UdpSendEvent::Server(ref data, addr) => {
-                                        self.socket.send_to(data.used_data(), *addr)
+                                        self.socket.send_to(data.used_data(), addr)
                                     }
                                     UdpSendEvent::Client(ref data) => {
                                         self.socket.send(data.used_data())
@@ -131,19 +135,19 @@ impl Socket {
 
                                 match send_result {
                                     Ok(length) => {
-                                        info!("sent packet of size {length}");
+                                        info!("sent packet of size {length} on {}", self.addr);
 
                                         match packet {
                                             UdpSendEvent::ServerTracking(_, addr, seq) => {
                                                 events.push_front(UdpEvent::SentServer(
-                                                    *addr,
-                                                    *seq,
+                                                    addr,
+                                                    seq,
                                                     Instant::now(),
                                                 ));
                                             }
                                             UdpSendEvent::ClientTracking(_, seq) => {
                                                 events.push_front(UdpEvent::SentClient(
-                                                    *seq,
+                                                    seq,
                                                     Instant::now(),
                                                 ));
                                             }
@@ -151,6 +155,9 @@ impl Socket {
                                         };
                                     }
                                     Err(ref e) if would_block(e) => {
+                                        //set the message back in the queue
+                                        self.send_queue.push_front(packet);
+
                                         break;
                                     }
                                     Err(e) => {
@@ -175,7 +182,7 @@ impl Socket {
                                     Ok((packet_size, source_address)) => {
                                         if packet_size >= 4 && self.buf[..4] == MAGIC_NUMBER_HEADER
                                         {
-                                            info!("received packet of size {packet_size}");
+                                            info!("received packet of size {packet_size} on {}", self.addr);
                                             let data_size = packet_size - 4;
                                             let mut buffer = ArrayPool::rent(data_size);
 
@@ -187,10 +194,8 @@ impl Socket {
                                             events
                                                 .push_front(UdpEvent::Read(source_address, buffer));
 
-                                            if let Some(max_events) = max_events {
-                                                if max_events >= events.len() {
-                                                    break;
-                                                }
+                                            if max_events <= events.len() {
+                                                return Ok(());
                                             }
                                         }
                                     }

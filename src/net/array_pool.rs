@@ -39,7 +39,7 @@ impl ArrayPool {
     }
 
     pub fn free(mut data: Vec<u8>) {
-        info!("Freeing data of length {} at ddr {:p}", data.len(), &data);
+        //info!("Freeing data of length {} at addr {:p}", data.len(), &data);
 
         let reminder = data.len() % SIZE_STEP;
         if reminder != 0 {
