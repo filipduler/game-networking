@@ -19,7 +19,6 @@ use super::send_buffer::SendPayload;
 const UDP_SOCKET: Token = Token(0);
 
 pub enum UdpEvent {
-    Start,
     SentServer(SocketAddr, u16, Instant),
     SentClient(u16, Instant),
     Read(SocketAddr, BufferPoolRef),
@@ -87,7 +86,7 @@ impl Socket {
         max_events: Option<usize>,
         events: &mut VecDeque<UdpEvent>,
     ) -> anyhow::Result<()> {
-        loop {
+        while Instant::now() < deadline {
             let timeout = deadline - Instant::now();
 
             //check if there are and send requests
@@ -209,6 +208,8 @@ impl Socket {
                 }
             }
         }
+        
+        Ok(())
     }
 }
 

@@ -44,8 +44,12 @@ impl ServerProcess {
         out_events: Sender<ServerEvent>,
         in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
     ) -> anyhow::Result<Self> {
+        let socket = Socket::bind(addr)?;
+
+        out_events.send(ServerEvent::Start)?;
+
         Ok(Self {
-            socket: Socket::bind(addr)?,
+            socket,
             connection_manager: ConnectionManager::new(max_clients),
             in_sends,
             send_queue: VecDeque::new(),
@@ -56,7 +60,7 @@ impl ServerProcess {
     pub fn start(&mut self) -> anyhow::Result<()> {
         let interval_rx = crossbeam_channel::tick(Duration::from_millis(10));
         let mut udp_events = VecDeque::new();
-
+        
         loop {
             select! {
                 //constant updates
@@ -89,9 +93,6 @@ impl ServerProcess {
 
                     while let Some(udp_event) = udp_events.pop_back() {
                         match udp_event {
-                            UdpEvent::Start => {
-                                self.out_events.send(ServerEvent::Start)?;
-                            }
                             UdpEvent::Read(addr, buffer) => {
                                 if let Err(ref e) = self.process_read_request(addr, buffer.used_data()) {
                                     error!("failed processing read request: {e}");

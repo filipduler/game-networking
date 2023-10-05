@@ -34,7 +34,7 @@ impl Server {
         );
 
         //wait for the start event
-        match send_rx.recv_timeout(Duration::from_secs(5)) {
+        match send_rx.recv_timeout(Duration::from_secs(50)) {
             Ok(ServerEvent::Start) => {}
             _ => panic!("failed waiting for start event"),
         };

@@ -5,6 +5,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use log::info;
 use static_init::dynamic;
 
 const SIZE_STEP: usize = 128;
@@ -38,7 +39,7 @@ impl ArrayPool {
     }
 
     pub fn free(mut data: Vec<u8>) {
-        //println!("z1 addr {:p}", &data);
+        info!("Freeing data of length {} at ddr {:p}", data.len(), &data);
 
         let reminder = data.len() % SIZE_STEP;
         if reminder != 0 {

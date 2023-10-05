@@ -29,11 +29,6 @@ pub fn try_login(socket: &mut Socket) -> anyhow::Result<(u64, u32)> {
     let timeout = Duration::from_secs(5);
     let client_salt = rand::thread_rng().gen();
 
-    //wait for start
-    if !matches!(read_udp_event(socket, timeout)?, UdpEvent::Start) {
-        bail!("expected start event");
-    }
-
     //send connection request
     send_connection_request(client_salt, socket)?;
 
