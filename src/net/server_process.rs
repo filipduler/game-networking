@@ -20,18 +20,23 @@ use super::{
     socket::{Socket, UdpEvent, UdpSendEvent},
 };
 
-pub enum ServerEvent {
-    Start,
-    Connect,
-    Disconnect,
+pub enum InternalServerEvent {
+    //the sever has started
+    ServerStarted,
+    //new connection
+    Connect(u32),
+    //connection disconnected
+    Disconnect(u32),
+    //received a packet that fits in a single fragment
     Receive(u32, BufferPoolRef),
+    //received a fragment packet
     ReceiveParts(u32, Vec<BufferPoolRef>),
 }
 
 pub struct ServerProcess {
     socket: Socket,
     //API channels
-    out_events: Sender<ServerEvent>,
+    out_events: Sender<InternalServerEvent>,
     in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
     //connections
     send_queue: VecDeque<UdpSendEvent>,
@@ -42,12 +47,12 @@ impl ServerProcess {
     pub fn bind(
         addr: SocketAddr,
         max_clients: usize,
-        out_events: Sender<ServerEvent>,
+        out_events: Sender<InternalServerEvent>,
         in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
     ) -> anyhow::Result<Self> {
         let socket = Socket::bind(addr)?;
 
-        out_events.send(ServerEvent::Start)?;
+        out_events.send(InternalServerEvent::ServerStarted)?;
 
         Ok(Self {
             socket,
@@ -131,11 +136,11 @@ impl ServerProcess {
             match client.channel.read(buffer, received_at) {
                 Ok(ReadPayload::Single(buffer)) => {
                     self.out_events
-                        .send(ServerEvent::Receive(client.identity.id, buffer))?;
+                        .send(InternalServerEvent::Receive(client.identity.id, buffer))?;
                 }
                 Ok(ReadPayload::Parts(parts)) => {
                     self.out_events
-                        .send(ServerEvent::ReceiveParts(client.identity.id, parts))?;
+                        .send(InternalServerEvent::ReceiveParts(client.identity.id, parts))?;
                 }
                 Err(e) => {
                     error!("failed channel read: {e}");

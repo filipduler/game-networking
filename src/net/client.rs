@@ -6,15 +6,16 @@ use log::error;
 
 use super::{
     array_pool::ArrayPool,
-    client_process::{ClientEvent, ClientProcess},
+    client_process::{ClientProcess, InternalClientEvent},
     fragmentation_manager::FragmentationManager,
     header::SendType,
     packets::{self, SendEvent},
 };
 
 pub struct Client {
+    client_id: u32,
     in_sends: Sender<(SendEvent, SendType)>,
-    out_events: Receiver<ClientEvent>,
+    out_events: Receiver<InternalClientEvent>,
 }
 
 impl Client {
@@ -34,12 +35,13 @@ impl Client {
         );
 
         //wait for the start event
-        match send_rx.recv_timeout(Duration::from_secs(50)) {
-            Ok(ClientEvent::Connect(client_id)) => {}
+        let client_id = match send_rx.recv_timeout(Duration::from_secs(50)) {
+            Ok(InternalClientEvent::Connect(client_id)) => client_id,
             _ => panic!("failed waiting for start event"),
         };
 
         Ok(Client {
+            client_id,
             in_sends: recv_tx,
             out_events: send_rx,
         })
@@ -52,21 +54,21 @@ impl Client {
         Ok(())
     }
 
-    pub fn read(&self, dest: &mut [u8]) -> anyhow::Result<usize> {
+    pub fn read<'a>(&self, dest: &'a mut [u8]) -> anyhow::Result<&'a [u8]> {
         match self.out_events.recv() {
-            Ok(ClientEvent::Receive(buffer)) => {
+            Ok(InternalClientEvent::Receive(buffer)) => {
                 if dest.len() < buffer.len() {
                     bail!("destination size is not big enough.")
                 }
                 dest[..buffer.len()].copy_from_slice(&buffer);
-                Ok(buffer.len())   
-            },
-            Ok(ClientEvent::ReceiveParts(parts)) => {
+                Ok(&dest[..buffer.len()])
+            }
+            Ok(InternalClientEvent::ReceiveParts(parts)) => {
                 let mut bytes_offset = 0;
                 for part in parts {
                     let part_len = part.len();
 
-                    if bytes_offset + part_len <=  dest.len()  {
+                    if bytes_offset + part_len <= dest.len() {
                         dest[bytes_offset..bytes_offset + part_len].copy_from_slice(&part);
                         bytes_offset += part_len;
                     } else {
@@ -74,8 +76,8 @@ impl Client {
                     }
                 }
 
-                Ok(bytes_offset) 
-            },
+                Ok(&dest[..bytes_offset])
+            }
             Err(e) => panic!("error receiving {e}"),
             _ => panic!("unexpected event"),
         }

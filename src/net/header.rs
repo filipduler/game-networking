@@ -62,7 +62,7 @@ impl Header {
     }
 
     pub fn write(&self, data: &mut [u8], int_buffer: &mut IntBuffer) -> anyhow::Result<()> {
-        if data.len() < HEADER_SIZE {
+        if data.len() - int_buffer.index < HEADER_SIZE {
             bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
         }
 
@@ -73,7 +73,7 @@ impl Header {
         int_buffer.write_u32(self.ack_bits, data);
 
         if self.packet_type.is_frag_variant() {
-            if data.len() < FRAG_HEADER_SIZE {
+            if data.len() - int_buffer.index < FRAG_HEADER_SIZE {
                 bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
             }
 
@@ -90,7 +90,7 @@ impl Header {
             bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
         }
 
-        let mut int_buffer = IntBuffer { index: 0 };
+        let mut int_buffer = IntBuffer::default();
 
         let seq = int_buffer.read_u16(data);
         let packet_type = PacketType::from_repr(int_buffer.read_u8(data))
@@ -105,17 +105,12 @@ impl Header {
 
         if packet_type.is_frag_variant() {
             if data.len() < FRAG_HEADER_SIZE {
-                bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
+                bail!("data length needs to be at least bytes {FRAG_HEADER_SIZE} long.");
             }
 
             fragment_group_id = int_buffer.read_u16(data);
             fragment_id = int_buffer.read_u8(data);
             fragment_size = int_buffer.read_u8(data);
-
-            //fragment id is 0 indexed
-            if fragment_id >= fragment_size {
-                bail!("fragment id cannot be larger or equal to fragment size");
-            }
         }
 
         Ok(Header {
@@ -139,7 +134,7 @@ impl Header {
     }
 
     #[inline]
-    pub fn max_header_size() -> usize {
+    pub const fn max_header_size() -> usize {
         FRAG_HEADER_SIZE
     }
 }

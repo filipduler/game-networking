@@ -24,7 +24,7 @@ use super::{
     PacketType, MAGIC_NUMBER_HEADER,
 };
 
-pub enum ClientEvent {
+pub enum InternalClientEvent {
     Connect(u32),
     Receive(BufferPoolRef),
     ReceiveParts(Vec<BufferPoolRef>),
@@ -35,7 +35,7 @@ pub struct ClientProcess {
     socket: Socket,
     send_queue: VecDeque<UdpSendEvent>,
     //API channels
-    out_events: Sender<ClientEvent>,
+    out_events: Sender<InternalClientEvent>,
     in_sends: Receiver<(SendEvent, SendType)>,
 }
 
@@ -43,14 +43,14 @@ impl ClientProcess {
     pub fn connect(
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
-        out_events: Sender<ClientEvent>,
+        out_events: Sender<InternalClientEvent>,
         in_sends: Receiver<(SendEvent, SendType)>,
     ) -> anyhow::Result<Self> {
         let mut socket = Socket::connect(local_addr, remote_addr)?;
 
         let (session_key, client_id) = connections::try_login(&mut socket).expect("login failed");
 
-        out_events.send(ClientEvent::Connect(client_id))?;
+        out_events.send(InternalClientEvent::Connect(client_id))?;
 
         Ok(Self {
             channel: Channel::new(local_addr, session_key, ChannelType::Client),
@@ -127,8 +127,10 @@ impl ClientProcess {
         match self.channel.read(buffer, received_at)? {
             ReadPayload::Single(payload) => self
                 .out_events
-                .send(ClientEvent::Receive(payload))?,
-            ReadPayload::Parts(parts) => self.out_events.send(ClientEvent::ReceiveParts(parts))?,
+                .send(InternalClientEvent::Receive(payload))?,
+            ReadPayload::Parts(parts) => self
+                .out_events
+                .send(InternalClientEvent::ReceiveParts(parts))?,
             _ => {}
         }
 

@@ -9,12 +9,17 @@ use super::{
     fragmentation_manager::FragmentationManager,
     header::SendType,
     packets::{self, SendEvent},
-    server_process::{ServerEvent, ServerProcess},
+    server_process::{InternalServerEvent, ServerProcess},
 };
+
+pub enum ServerEvent<'a> {
+    Connect,
+    Receive(u32, &'a [u8]),
+}
 
 pub struct Server {
     in_sends: Sender<(SocketAddr, SendEvent, SendType)>,
-    out_events: Receiver<ServerEvent>,
+    out_events: Receiver<InternalServerEvent>,
 }
 
 impl Server {
@@ -35,7 +40,7 @@ impl Server {
 
         //wait for the start event
         match send_rx.recv_timeout(Duration::from_secs(50)) {
-            Ok(ServerEvent::Start) => {}
+            Ok(InternalServerEvent::ServerStarted) => {}
             _ => panic!("failed waiting for start event"),
         };
 
@@ -52,22 +57,22 @@ impl Server {
         Ok(())
     }
 
-    pub fn read(&self, dest: &mut [u8]) -> anyhow::Result<usize> {
+    pub fn read<'a>(&self, dest: &'a mut [u8]) -> anyhow::Result<ServerEvent<'a>> {
         todo!("this still has to return the event..");
         match self.out_events.recv() {
-            Ok(ServerEvent::Receive(client_id, buffer)) => {
+            Ok(InternalServerEvent::Receive(client_id, buffer)) => {
                 if dest.len() < buffer.len() {
                     bail!("destination size is not big enough.")
                 }
                 dest[..buffer.len()].copy_from_slice(&buffer);
-                Ok(buffer.len())   
-            },
-            Ok(ServerEvent::ReceiveParts(client_id, parts)) => {
+                Ok(ServerEvent::Receive(client_id, &dest[..buffer.len()]))
+            }
+            Ok(InternalServerEvent::ReceiveParts(client_id, parts)) => {
                 let mut bytes_offset = 0;
                 for part in parts {
                     let part_len = part.len();
 
-                    if bytes_offset + part_len <=  dest.len()  {
+                    if bytes_offset + part_len <= dest.len() {
                         dest[bytes_offset..bytes_offset + part_len].copy_from_slice(&part);
                         bytes_offset += part_len;
                     } else {
@@ -75,8 +80,8 @@ impl Server {
                     }
                 }
 
-                Ok(bytes_offset) 
-            },
+                Ok(ServerEvent::Receive(client_id, &dest[..bytes_offset]))
+            }
             Err(e) => panic!("error receiving {e}"),
             _ => panic!("unexpected event"),
         }

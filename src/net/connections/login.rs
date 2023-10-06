@@ -65,7 +65,7 @@ fn read_challenge(client_salt: u64, socket: &mut Socket, timeout: Duration) -> a
         bail!("unexpected event");
     };
 
-    let mut int_buffer = IntBuffer { index: 0 };
+    let mut int_buffer = IntBuffer::default();
     let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
         state
     } else {
@@ -87,7 +87,7 @@ fn read_connection_status(socket: &mut Socket, timeout: Duration) -> anyhow::Res
         bail!("unexpected event");
     };
 
-    let mut int_buffer = IntBuffer { index: 0 };
+    let mut int_buffer = IntBuffer::default();
     let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
         state
     } else {
@@ -106,7 +106,7 @@ fn send_challenge_response(
     server_salt: u64,
     socket: &mut Socket,
 ) -> anyhow::Result<()> {
-    let mut int_buffer = IntBuffer { index: 0 };
+    let mut int_buffer = IntBuffer::default();
 
     let mut buffer = ArrayPool::rent(21);
 
