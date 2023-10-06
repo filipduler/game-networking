@@ -1,6 +1,6 @@
 use std::{
     rc::Rc,
-    time::{Duration, Instant},
+    time::{Duration, Instant}, slice::Chunks,
 };
 
 use anyhow::bail;
@@ -61,7 +61,7 @@ impl FragmentationManager {
         Ok(fragments)
     }
 
-    pub fn insert_fragment(&mut self, header: &Header, data: &[u8]) -> anyhow::Result<bool> {
+    pub fn insert_fragment(&mut self, header: &Header, buffer: BufferPoolRef) -> anyhow::Result<bool> {
         if header.fragment_id >= header.fragment_size {
             bail!("fragment id cannot be larger than the fragment size")
         }
@@ -101,39 +101,39 @@ impl FragmentationManager {
         }
 
         if fragment.chunks[header.fragment_id as usize].is_none() {
-            fragment.chunks[header.fragment_id as usize] = Some(data.to_vec());
+            let buffer_len = buffer.len();
+
+            fragment.chunks[header.fragment_id as usize] = Some(buffer);
             fragment.current_size += 1;
-            fragment.current_bytes += data.len();
+            fragment.current_bytes += buffer_len;
         }
 
         Ok(fragment.is_done())
     }
 
-    pub fn assemble(&mut self, group_id: u16) -> anyhow::Result<Option<Vec<u8>>> {
-        let mut packet_data = None;
-
+    pub fn assemble(&mut self, group_id: u16) -> anyhow::Result<Vec<BufferPoolRef>> {
         if !self.validate_group(group_id) {
             self.remove_fragment_group(group_id);
+            bail!("fragment group has expired");
         }
 
         if let Some(fragment) = self.fragments.get(group_id) {
-            if fragment.is_done() {
-                let mut parts: Vec<u8> = Vec::with_capacity(fragment.current_bytes);
-                for i in 0..fragment.size {
-                    let chunk: &[u8] = fragment.chunks[i as usize].as_ref().unwrap().as_ref();
-                    parts.extend(chunk);
-                }
-
-                packet_data = Some(parts);
+            if !fragment.is_done() {
+                bail!("fragment is not done yet");
             }
+        } else {
+            bail!("fragment not found");
         }
 
-        //remove the fragment group
-        if packet_data.is_some() {
-            self.fragments.remove(group_id);
+        let mut fragment = self.fragments.take(group_id).unwrap();
+
+        let mut parts = Vec::with_capacity(fragment.current_size as usize);
+        for i in 0..fragment.size {
+            //TODO: idk what this remove does but Im sure it can be optimized
+            parts.push(fragment.chunks.remove(i as usize).unwrap());
         }
 
-        Ok(packet_data)
+        Ok(parts)
     }
 
     fn validate_group(&self, group_id: u16) -> bool {
@@ -154,7 +154,7 @@ impl FragmentationManager {
 
 pub struct ReceiveFragments {
     pub group_id: u16,
-    pub chunks: Vec<Option<Vec<u8>>>,
+    pub chunks: Vec<Option<BufferPoolRef>>,
     pub size: u8,
     pub current_size: u8,
     pub current_bytes: usize,
@@ -199,19 +199,20 @@ mod tests {
             fragment_id: 0,
             fragment_size: u8::MAX,
         };
-        let data = vec![1, 2, 3];
-
+        
         for i in 0..u8::MAX {
-            let status = fragment_manager.insert_fragment(&header, &data).unwrap();
+            let data = ArrayPool::rent(3);
+
+            let status = fragment_manager.insert_fragment(&header, data).unwrap();
             header.fragment_id += 1;
             assert_eq!(status, i == u8::MAX - 1);
         }
 
         let frag_data = fragment_manager
             .assemble(header.fragment_group_id)
-            .unwrap()
             .unwrap();
-        assert_eq!(frag_data.len(), data.len() * u8::MAX as usize)
+
+        assert_eq!(frag_data.len(), 3 * u8::MAX as usize)
     }
 
     #[test]
@@ -227,15 +228,14 @@ mod tests {
             fragment_id: 0,
             fragment_size: 2,
         };
-        let data = vec![1, 2, 3];
 
-        fragment_manager.insert_fragment(&header, &data).unwrap();
+        fragment_manager.insert_fragment(&header, ArrayPool::rent(3)).unwrap();
         header.fragment_id += 1;
 
         //sleep for longer than the group timeout
         thread::sleep(GROUP_TIMEOUT + Duration::from_millis(250));
 
-        assert!(fragment_manager.insert_fragment(&header, &data).is_err());
+        assert!(fragment_manager.insert_fragment(&header, ArrayPool::rent(3)).is_err());
         //check the fragment group was removed
         assert!(fragment_manager.fragments.is_none(header.fragment_group_id));
     }
@@ -253,10 +253,9 @@ mod tests {
             fragment_id: 0,
             fragment_size: u8::MAX,
         };
-        let data = vec![1, 2, 3];
 
-        fragment_manager.insert_fragment(&header, &data).unwrap();
-        fragment_manager.insert_fragment(&header, &data).unwrap();
+        fragment_manager.insert_fragment(&header,  ArrayPool::rent(3)).unwrap();
+        fragment_manager.insert_fragment(&header,  ArrayPool::rent(3)).unwrap();
 
         let frag = fragment_manager
             .fragments
@@ -279,15 +278,14 @@ mod tests {
             fragment_id: 0,
             fragment_size: u8::MAX,
         };
-        let data = vec![1, 2, 3];
 
-        fragment_manager.insert_fragment(&header, &data).unwrap();
+        fragment_manager.insert_fragment(&header, ArrayPool::rent(3)).unwrap();
         header.fragment_id += 1;
 
         //change the fragment size, this should throw an error
         header.fragment_size -= 1;
 
-        assert!(fragment_manager.insert_fragment(&header, &data).is_err());
+        assert!(fragment_manager.insert_fragment(&header, ArrayPool::rent(3)).is_err());
     }
 
     #[test]

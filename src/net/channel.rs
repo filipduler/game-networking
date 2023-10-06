@@ -23,9 +23,9 @@ pub enum ChannelType {
     Server,
 }
 
-pub enum ReadPayload<'a> {
-    Ref(&'a [u8]),
-    Vec(Vec<u8>),
+pub enum ReadPayload {
+    Single(BufferPoolRef),
+    Parts(Vec<BufferPoolRef>),
     None,
 }
 
@@ -42,7 +42,8 @@ pub struct Channel {
     //tracking received packets for preventing emitting duplicate packets
     received_packets: WindowSequenceBuffer<()>,
     //fragmentation
-    fragmentation: FragmentationManager,
+    reliable_fragmentation: FragmentationManager,
+    unreliable_fragmentation: FragmentationManager,
 }
 
 impl Channel {
@@ -57,7 +58,8 @@ impl Channel {
             send_ack: false,
             send_buffer: SendBufferManager::new(),
             received_packets: WindowSequenceBuffer::with_size(BUFFER_SIZE, BUFFER_WINDOW_SIZE),
-            fragmentation: FragmentationManager::new(),
+            reliable_fragmentation: FragmentationManager::new(),
+            unreliable_fragmentation: FragmentationManager::new(),
         }
     }
 
@@ -72,7 +74,7 @@ impl Channel {
                 self.send_tracking(payload.seq, payload.buffer.clone(), send_queue);
             }
             SendEvent::Fragmented(fragments) => {
-                let fragments = self.fragmentation.split_fragments(fragments)?;
+                let fragments = self.reliable_fragmentation.split_fragments(fragments)?;
                 for mut chunk in fragments.chunks {
                     let payload = self.create_send_buffer(
                         chunk.buffer,
@@ -100,7 +102,7 @@ impl Channel {
                 self.send_non_tracking(buffer, send_queue);
             }
             SendEvent::Fragmented(mut fragments) => {
-                let fragments = self.fragmentation.split_fragments(fragments)?;
+                let fragments = self.reliable_fragmentation.split_fragments(fragments)?;
                 for mut chunk in fragments.chunks {
                     self.create_unreliable_packet(
                         &mut chunk.buffer,
@@ -158,23 +160,16 @@ impl Channel {
         self.send_ack = false;
     }
 
-    pub fn read<'a>(
-        &mut self,
-        data: &'a [u8],
-        received_at: &Instant,
-    ) -> anyhow::Result<ReadPayload<'a>> {
-        if data.len() < HEADER_SIZE {
-            return Ok(ReadPayload::None);
-        }
+    pub fn read(&mut self, mut buffer: BufferPoolRef, received_at: &Instant) -> anyhow::Result<ReadPayload> {
+        let header = Header::read(&buffer)?;
 
-        let header = Header::read(data)?;
+        //remove the header data from the buffer
+        buffer.left_shift(header.get_header_size());
 
         //validate session key
         if header.session_key != self.session_key {
             bail!("incorrect session key");
         }
-
-        let payload_size = data.len() - header.get_header_size();
 
         match header.packet_type {
             PacketType::PayloadReliable | PacketType::PayloadReliableFrag => {
@@ -196,18 +191,13 @@ impl Channel {
                 if new_packet {
                     self.received_packets.insert(header.seq, ());
 
-                    if payload_size > 0 {
-                        let payload = &data[header.get_header_size()..data.len()];
+                    if buffer.len() > 0 {
                         if is_frag {
-                            if self.fragmentation.insert_fragment(&header, payload)? {
-                                if let Some(data) =
-                                    self.fragmentation.assemble(header.fragment_group_id)?
-                                {
-                                    return Ok(ReadPayload::Vec(data));
-                                }
+                            if self.reliable_fragmentation.insert_fragment(&header, buffer)? {
+                                return Ok(ReadPayload::Parts(self.reliable_fragmentation.assemble(header.fragment_group_id)?));
                             }
                         } else {
-                            return Ok(ReadPayload::Ref(payload));
+                            return Ok(ReadPayload::Single(buffer));
                         }
                     }
                 }
@@ -220,10 +210,8 @@ impl Channel {
                 }
 
                 self.mark_sent_packets(header.ack, header.ack_bits, received_at);
-                if payload_size > 0 {
-                    return Ok(ReadPayload::Ref(
-                        &data[header.get_header_size()..data.len()],
-                    ));
+                if buffer.len() > 0 {
+                    return Ok(ReadPayload::Single(buffer));
                 }
             }
             _ => {}

@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,16 +120,16 @@ impl Socket {
                             while let Some(packet) = self.send_queue.pop_back() {
                                 let send_result = match packet {
                                     UdpSendEvent::ServerTracking(ref data, addr, _) => {
-                                        self.socket.send_to(data.borrow().used_data(), addr)
+                                        self.socket.send_to(data.borrow().deref(), addr)
                                     }
                                     UdpSendEvent::ClientTracking(ref data, _) => {
-                                        self.socket.send(data.borrow().used_data())
+                                        self.socket.send(data.borrow().deref())
                                     }
                                     UdpSendEvent::Server(ref data, addr) => {
-                                        self.socket.send_to(data.used_data(), addr)
+                                        self.socket.send_to(data, addr)
                                     }
                                     UdpSendEvent::Client(ref data) => {
-                                        self.socket.send(data.used_data())
+                                        self.socket.send(data)
                                     }
                                 };
 
@@ -191,7 +192,6 @@ impl Socket {
                                             //copy the data
                                             buffer[..data_size]
                                                 .copy_from_slice(&self.buf[4..packet_size]);
-                                            buffer.used = data_size;
 
                                             events.push_front(UdpEvent::Read(
                                                 source_address,

@@ -43,7 +43,6 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
             int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
             int_buffer.jump(FRAG_HEADER_SIZE);
             int_buffer.write_slice(chunk, &mut buffer);
-            int_buffer.set_length(&mut buffer);
 
             fragments.push(buffer);
         }
@@ -56,7 +55,6 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
         int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
         int_buffer.jump(FRAG_HEADER_SIZE);
         int_buffer.write_slice(data, &mut buffer);
-        int_buffer.set_length(&mut buffer);
 
         Ok(SendEvent::Single(buffer))
     }

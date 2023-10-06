@@ -69,27 +69,33 @@ impl ArrayPool {
 
 pub struct BufferPoolRef {
     buffer: Vec<u8>,
-    pub used: usize,
+    used: usize,
 }
 
 impl BufferPoolRef {
     #[inline]
-    pub fn used_data(&self) -> &[u8] {
-        &self.buffer[..self.used]
+    pub fn len(&self) -> usize { 
+        self.used 
+    }
+
+    #[inline]
+    pub fn left_shift(&mut self, length: usize) {
+        let left = self.buffer.drain(0..length);
+        self.used -= left.len();
     }
 }
 
 impl Deref for BufferPoolRef {
-    type Target = Vec<u8>;
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        &self.buffer
+        &self.buffer[..self.used]
     }
 }
 
 impl DerefMut for BufferPoolRef {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buffer
+        &mut self.buffer[..self.used]
     }
 }
 

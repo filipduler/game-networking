@@ -48,14 +48,14 @@ impl ConnectionManager {
     pub fn process_connect(
         &mut self,
         addr: &SocketAddr,
-        data: &[u8],
+        buffer: BufferPoolRef,
     ) -> anyhow::Result<Option<BufferPoolRef>> {
         if !self.has_free_slots() {
             return Ok(None);
         }
 
         let mut int_buffer = IntBuffer::default();
-        let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(data)) {
+        let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
             state
         } else {
             bail!("invalid connection state in header");
@@ -65,12 +65,12 @@ impl ConnectionManager {
         //if let Some(identity) = self.connect_requests.get_mut(addr) {
         if let Some(identity) = self.connect_requests.get(addr) {
             if state == PacketType::ChallengeResponse
-                && identity.session_key == int_buffer.read_u64(data)
+                && identity.session_key == int_buffer.read_u64(&buffer)
             {
                 return Ok(self.finish_challenge(addr));
             }
         } else {
-            let client_salt = int_buffer.read_u64(data);
+            let client_salt = int_buffer.read_u64(&buffer);
             let identity = Identity::new(*addr, client_salt);
 
             self.connect_requests.insert(*addr, identity.clone());
@@ -94,14 +94,13 @@ impl ConnectionManager {
         if let Some(connection_index) = self.get_free_slot_index() {
             //remove the identity from the connect requests
             if let Some(identity) = self.connect_requests.remove(addr) {
-                let mut buffer = ArrayPool::rent(21);
+                let mut buffer = ArrayPool::rent(9);
                 let mut int_buffer = IntBuffer::default();
 
                 int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
                 int_buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut buffer);
                 int_buffer.write_u32(identity.id, &mut buffer);
-                int_buffer.set_length(&mut buffer);
-
+                
                 //insert the client
                 self.insert_connection(connection_index, &identity);
 

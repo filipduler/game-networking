@@ -17,11 +17,6 @@ impl IntBuffer {
     }
 
     #[inline]
-    pub fn set_length(&self, buffer: &mut BufferPoolRef) {
-        buffer.used = self.index
-    }
-
-    #[inline]
     pub fn reset(&mut self) {
         self.index = 0;
     }

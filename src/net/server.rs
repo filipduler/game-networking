@@ -52,7 +52,33 @@ impl Server {
         Ok(())
     }
 
-    pub fn read(&self) -> anyhow::Result<ServerEvent> {
-        Ok(self.out_events.recv()?)
+    pub fn read(&self, dest: &mut [u8]) -> anyhow::Result<usize> {
+        todo!("this still has to return the event..");
+        match self.out_events.recv() {
+            Ok(ServerEvent::Receive(client_id, buffer)) => {
+                if dest.len() < buffer.len() {
+                    bail!("destination size is not big enough.")
+                }
+                dest[..buffer.len()].copy_from_slice(&buffer);
+                Ok(buffer.len())   
+            },
+            Ok(ServerEvent::ReceiveParts(client_id, parts)) => {
+                let mut bytes_offset = 0;
+                for part in parts {
+                    let part_len = part.len();
+
+                    if bytes_offset + part_len <=  dest.len()  {
+                        dest[bytes_offset..bytes_offset + part_len].copy_from_slice(&part);
+                        bytes_offset += part_len;
+                    } else {
+                        bail!("destination size is not big enough.")
+                    }
+                }
+
+                Ok(bytes_offset) 
+            },
+            Err(e) => panic!("error receiving {e}"),
+            _ => panic!("unexpected event"),
+        }
     }
 }

@@ -35,16 +35,19 @@ mod tests {
         let mut server = Server::start(server_addr, 64).unwrap();
         let mut client = Client::connect(client_addr, server_addr).unwrap();
 
+        let mut read_buf = [0_u8; 1 << 16];
+        
         let data = generate_random_u8_vector(1160);
 
         //to establish connection
         client.send(&data, SendType::Reliable).unwrap();
 
-        let ev = server.read();
+        let ev = server.read(&mut read_buf).unwrap();
+
 
         //server.send(client_addr, &data, SendType::Reliable).unwrap();
         loop {
-            let res = client.read();
+            let n = client.read(&mut read_buf).unwrap();
         }
     }
 }

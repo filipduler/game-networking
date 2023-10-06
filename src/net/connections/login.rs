@@ -64,19 +64,18 @@ fn read_challenge(client_salt: u64, socket: &mut Socket, timeout: Duration) -> a
     } else {
         bail!("unexpected event");
     };
-    let data = &buffer.used_data();
 
-    let mut buffer = IntBuffer { index: 0 };
-    let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
+    let mut int_buffer = IntBuffer { index: 0 };
+    let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
         state
     } else {
         bail!("invalid connection state in header");
     };
 
-    if client_salt != buffer.read_u64(data) {
+    if client_salt != int_buffer.read_u64(&buffer) {
         bail!("invalid client salt");
     }
-    let server_salt = buffer.read_u64(data);
+    let server_salt = int_buffer.read_u64(&buffer);
 
     Ok(server_salt)
 }
@@ -87,17 +86,16 @@ fn read_connection_status(socket: &mut Socket, timeout: Duration) -> anyhow::Res
     } else {
         bail!("unexpected event");
     };
-    let data = buffer.used_data();
 
-    let mut buffer = IntBuffer { index: 0 };
-    let state = if let Some(state) = PacketType::from_repr(buffer.read_u8(data)) {
+    let mut int_buffer = IntBuffer { index: 0 };
+    let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
         state
     } else {
         bail!("invalid connection state in header");
     };
 
     if state == PacketType::ConnectionAccepted {
-        return Ok(buffer.read_u32(data));
+        return Ok(int_buffer.read_u32(&buffer));
     }
 
     bail!("connection not accepted");

@@ -14,7 +14,7 @@ use mio::{net::UdpSocket, Token};
 use rand::Rng;
 
 use super::{
-    array_pool::ArrayPool,
+    array_pool::{ArrayPool, BufferPoolRef},
     channel::{Channel, ChannelType, ReadPayload},
     connections,
     header::SendType,
@@ -26,7 +26,8 @@ use super::{
 
 pub enum ClientEvent {
     Connect(u32),
-    Receive(Vec<u8>),
+    Receive(BufferPoolRef),
+    ReceiveParts(Vec<BufferPoolRef>),
 }
 
 pub struct ClientProcess {
@@ -100,7 +101,7 @@ impl ClientProcess {
                     while let Some(udp_event) = udp_events.pop_back() {
                         match udp_event {
                             UdpEvent::Read(addr, buffer, received_at) => {
-                                if let Err(ref e) = self.process_read_request(addr, buffer.used_data(), &received_at) {
+                                if let Err(ref e) = self.process_read_request(addr, buffer, &received_at) {
                                     error!("failed processing read request: {e}");
                                 };
                             }
@@ -120,14 +121,14 @@ impl ClientProcess {
     fn process_read_request(
         &mut self,
         addr: SocketAddr,
-        data: &[u8],
+        buffer: BufferPoolRef,
         received_at: &Instant,
     ) -> anyhow::Result<()> {
-        match self.channel.read(data, received_at)? {
-            ReadPayload::Ref(payload) => self
+        match self.channel.read(buffer, received_at)? {
+            ReadPayload::Single(payload) => self
                 .out_events
-                .send(ClientEvent::Receive(payload.to_vec()))?,
-            ReadPayload::Vec(payload) => self.out_events.send(ClientEvent::Receive(payload))?,
+                .send(ClientEvent::Receive(payload))?,
+            ReadPayload::Parts(parts) => self.out_events.send(ClientEvent::ReceiveParts(parts))?,
             _ => {}
         }
 

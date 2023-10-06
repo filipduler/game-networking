@@ -12,7 +12,7 @@ use crossbeam_channel::{select, Receiver, Sender};
 use log::error;
 
 use super::{
-    array_pool::ArrayPool,
+    array_pool::{ArrayPool, BufferPoolRef},
     channel::ReadPayload,
     connections::ConnectionManager,
     header::SendType,
@@ -24,7 +24,8 @@ pub enum ServerEvent {
     Start,
     Connect,
     Disconnect,
-    Receive(u32, Vec<u8>),
+    Receive(u32, BufferPoolRef),
+    ReceiveParts(u32, Vec<BufferPoolRef>),
 }
 
 pub struct ServerProcess {
@@ -98,7 +99,7 @@ impl ServerProcess {
                     while let Some(udp_event) = udp_events.pop_back() {
                         match udp_event {
                             UdpEvent::Read(addr, buffer, received_at) => {
-                                if let Err(ref e) = self.process_read_request(addr, buffer.used_data(), &received_at) {
+                                if let Err(ref e) = self.process_read_request(addr, buffer, &received_at) {
                                     error!("failed processing read request: {e}");
                                 };
                             }
@@ -120,21 +121,21 @@ impl ServerProcess {
     fn process_read_request(
         &mut self,
         addr: SocketAddr,
-        data: &[u8],
+        buffer: BufferPoolRef,
         received_at: &Instant,
     ) -> anyhow::Result<()> {
         //client exists, process the request
         let mut disconnect_client_addr = None;
 
         if let Some(client) = self.connection_manager.get_client_mut(&addr) {
-            match client.channel.read(data, received_at) {
-                Ok(ReadPayload::Ref(payload)) => {
+            match client.channel.read(buffer, received_at) {
+                Ok(ReadPayload::Single(buffer)) => {
                     self.out_events
-                        .send(ServerEvent::Receive(client.identity.id, payload.to_vec()))?;
+                        .send(ServerEvent::Receive(client.identity.id, buffer))?;
                 }
-                Ok(ReadPayload::Vec(payload)) => {
+                Ok(ReadPayload::Parts(parts)) => {
                     self.out_events
-                        .send(ServerEvent::Receive(client.identity.id, payload))?;
+                        .send(ServerEvent::ReceiveParts(client.identity.id, parts))?;
                 }
                 Err(e) => {
                     error!("failed channel read: {e}");
@@ -144,7 +145,7 @@ impl ServerProcess {
             }
         }
         //client doesn't exist and theres space on the server, start the connection process
-        else if let Ok(Some(buffer)) = self.connection_manager.process_connect(&addr, data) {
+        else if let Ok(Some(buffer)) = self.connection_manager.process_connect(&addr, buffer) {
             self.send_queue
                 .push_front(UdpSendEvent::Server(buffer, addr));
         }
