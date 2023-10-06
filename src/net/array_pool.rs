@@ -80,8 +80,8 @@ impl BufferPoolRef {
 
     #[inline]
     pub fn left_shift(&mut self, length: usize) {
-        let left = self.buffer.drain(0..length);
-        self.used -= left.len();
+        self.buffer[..self.used].rotate_left(length);
+        self.used -= length;
     }
 }
 
@@ -129,6 +129,34 @@ mod tests {
     fn rounding_requested_size_to_multiple() {
         let buffer = ArrayPool::rent(SIZE_STEP - 1);
         assert_eq!(buffer.buffer.len(), SIZE_STEP);
+    }
+
+    #[test]
+    fn buffer_deref() {
+        
+        let buffer = ArrayPool::rent(50);
+        let data: &[u8] = &buffer;
+        assert_eq!(data.len(), 50);
+    }
+
+    #[test]
+    fn buffer_mut_deref() {
+        let buffer = ArrayPool::rent(50);
+        let mut data: &[u8] = &buffer;
+        assert_eq!(data.len(), 50);
+    }
+
+    #[test]
+    fn buffer_left_shift() {
+        let mut buffer = ArrayPool::rent(5);
+        let data = &[1, 2, 3, 4, 5];
+
+        buffer.copy_from_slice(data);
+
+        buffer.left_shift(3);
+        assert_eq!(buffer.len(), 2);
+        
+        assert_eq!(buffer.deref(), &data[3..5]);
     }
 
     /*#[test]
