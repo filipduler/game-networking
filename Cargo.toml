@@ -10,7 +10,6 @@ mio = { version = "0.8.8", features = ["os-poll", "net"] }
 crossbeam-channel = "0.5.8"
 env_logger = "0.10.0"
 log = "0.4.0"
-parking_lot = "0.12.1"
 rand = "0.8"
 bit_field = "0.10.2"
 strum = "0.25"
