@@ -9,12 +9,12 @@ use std::{
 
 use anyhow::bail;
 use crossbeam_channel::{select, Receiver, Sender};
-use log::error;
+use log::{error, info};
 
 use super::{
     array_pool::{ArrayPool, BufferPoolRef},
     channel::ReadPayload,
-    connections::ConnectionManager,
+    connections::{ConnectionManager, ConnectionStatus},
     header::SendType,
     packets::SendEvent,
     socket::{Socket, UdpEvent, UdpSendEvent},
@@ -24,9 +24,9 @@ pub enum InternalServerEvent {
     //the sever has started
     ServerStarted,
     //new connection
-    Connect(u32),
+    NewConnection(u32),
     //connection disconnected
-    Disconnect(u32),
+    ConnectionLost(u32),
     //received a packet that fits in a single fragment
     Receive(u32, BufferPoolRef),
     //received a fragment packet
@@ -150,14 +150,31 @@ impl ServerProcess {
             }
         }
         //client doesn't exist and theres space on the server, start the connection process
-        else if let Ok(Some(buffer)) = self.connection_manager.process_connect(&addr, buffer) {
-            self.send_queue
-                .push_front(UdpSendEvent::Server(buffer, addr));
+        else {
+            match self
+                .connection_manager
+                .process_connect(&addr, buffer, &mut self.send_queue)?
+            {
+                ConnectionStatus::Connected(client_id) => {
+                    self.out_events
+                        .send(InternalServerEvent::NewConnection(client_id))?;
+                    info!("New client connected on addr {addr} with id {client_id}")
+                }
+                ConnectionStatus::Connecting => {
+                    info!("New client connecting on addr {addr}")
+                }
+                ConnectionStatus::Rejected => {
+                    info!("Client connection rejected on addr {addr}")
+                }
+            };
         }
 
         //disconnect the client
         if let Some(addr) = disconnect_client_addr {
-            self.connection_manager.disconnect_connection(addr);
+            if let Some(client_id) = self.connection_manager.disconnect_connection(addr) {
+                self.out_events
+                    .send(InternalServerEvent::ConnectionLost(client_id))?;
+            }
         }
 
         Ok(())

@@ -8,6 +8,12 @@ use std::{
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
+pub enum ConnectionStatus {
+    Rejected,
+    Connecting,
+    Connected(u32),
+}
+
 use crate::net::{
     array_pool::{ArrayPool, BufferPoolRef},
     int_buffer::IntBuffer,
@@ -49,9 +55,10 @@ impl ConnectionManager {
         &mut self,
         addr: &SocketAddr,
         buffer: BufferPoolRef,
-    ) -> anyhow::Result<Option<BufferPoolRef>> {
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) -> anyhow::Result<ConnectionStatus> {
         if !self.has_free_slots() {
-            return Ok(None);
+            return Ok(ConnectionStatus::Rejected);
         }
 
         let mut int_buffer = IntBuffer::default();
@@ -67,7 +74,11 @@ impl ConnectionManager {
             if state == PacketType::ChallengeResponse
                 && identity.session_key == int_buffer.read_u64(&buffer)
             {
-                return Ok(self.finish_challenge(addr));
+                let client_id = identity.id;
+                if let Some(buffer) = self.finish_challenge(addr) {
+                    send_queue.push_back(UdpSendEvent::Server(buffer, *addr));
+                    return Ok(ConnectionStatus::Connected(client_id));
+                }
             }
         } else {
             let client_salt = int_buffer.read_u64(&buffer);
@@ -84,10 +95,11 @@ impl ConnectionManager {
             int_buffer.write_u64(client_salt, &mut buffer);
             int_buffer.write_u64(identity.server_salt, &mut buffer);
 
-            return Ok(Some(buffer));
+            send_queue.push_back(UdpSendEvent::Server(buffer, *addr));
+            return Ok(ConnectionStatus::Connecting);
         }
 
-        Ok(None)
+        Ok(ConnectionStatus::Rejected)
     }
 
     fn finish_challenge(&mut self, addr: &SocketAddr) -> Option<BufferPoolRef> {
@@ -100,7 +112,7 @@ impl ConnectionManager {
                 int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
                 int_buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut buffer);
                 int_buffer.write_u32(identity.id, &mut buffer);
-                
+
                 //insert the client
                 self.insert_connection(connection_index, &identity);
 
@@ -124,15 +136,20 @@ impl ConnectionManager {
         self.active_clients += 1;
     }
 
-    pub fn disconnect_connection(&mut self, addr: SocketAddr) {
+    pub fn disconnect_connection(&mut self, addr: SocketAddr) -> Option<u32> {
+        let mut client_id = None;
+
         if let Some(index) = self.addr_map.get(&addr).cloned() {
             let slot = &self.connections[index];
-            if slot.is_some() {
+            if let Some(connection) = slot {
                 self.active_clients -= 1;
+                client_id = Some(connection.identity.id);
             }
             self.addr_map.remove(&addr);
             self.connections[index] = None;
         }
+
+        client_id
     }
 
     fn has_free_slots(&self) -> bool {

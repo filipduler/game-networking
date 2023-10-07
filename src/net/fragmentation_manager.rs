@@ -18,7 +18,7 @@ use super::{
 };
 
 pub const FRAGMENT_SIZE: usize = 1024;
-const MAX_FRAGMENT_SIZE: usize = FRAGMENT_SIZE * u8::MAX as usize;
+pub const MAX_FRAGMENT_SIZE: usize = FRAGMENT_SIZE * u8::MAX as usize;
 const GROUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct FragmentationManager {

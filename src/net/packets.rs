@@ -53,9 +53,57 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
 
         let mut buffer = ArrayPool::rent(buffer_size);
         int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
-        int_buffer.jump(FRAG_HEADER_SIZE);
+        int_buffer.jump(HEADER_SIZE);
         int_buffer.write_slice(data, &mut buffer);
 
         Ok(SendEvent::Single(buffer))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bit_field::BitField;
+
+    use crate::net::fragmentation_manager::MAX_FRAGMENT_SIZE;
+
+    use super::*;
+
+    #[test]
+    fn send_empty_packet() {
+        let data = Vec::new();
+        assert!(construct_send_event(&data).is_err());
+    }
+
+    #[test]
+    fn packet_exceeds_max_size() {
+        let buffer = ArrayPool::rent(MAX_FRAGMENT_SIZE + 1);
+        assert!(construct_send_event(&buffer).is_err());
+    }
+
+    #[test]
+    fn packet_max_size() {
+        let buffer = ArrayPool::rent(MAX_FRAGMENT_SIZE);
+
+        assert!(construct_send_event(&buffer).is_ok());
+    }
+
+    #[test]
+    fn test_single_packet() {
+        let buffer = ArrayPool::rent(FRAGMENT_SIZE);
+
+        assert!(matches!(
+            construct_send_event(&buffer).unwrap(),
+            SendEvent::Single(buffer)
+        ));
+    }
+
+    #[test]
+    fn test_fragmented_packet() {
+        let buffer = ArrayPool::rent(FRAGMENT_SIZE + 1);
+
+        assert!(matches!(
+            construct_send_event(&buffer).unwrap(),
+            SendEvent::Fragmented(buffer)
+        ));
     }
 }

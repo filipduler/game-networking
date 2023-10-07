@@ -160,7 +160,11 @@ impl Channel {
         self.send_ack = false;
     }
 
-    pub fn read(&mut self, mut buffer: BufferPoolRef, received_at: &Instant) -> anyhow::Result<ReadPayload> {
+    pub fn read(
+        &mut self,
+        mut buffer: BufferPoolRef,
+        received_at: &Instant,
+    ) -> anyhow::Result<ReadPayload> {
         let header = Header::read(&buffer)?;
 
         //remove the header data from the buffer
@@ -173,8 +177,6 @@ impl Channel {
 
         match header.packet_type {
             PacketType::PayloadReliable | PacketType::PayloadReliableFrag => {
-                let is_frag = header.packet_type.is_frag_variant();
-
                 //always send ack even if its a duplicate
                 self.send_ack = true;
                 let mut new_packet = false;
@@ -192,9 +194,15 @@ impl Channel {
                     self.received_packets.insert(header.seq, ());
 
                     if buffer.len() > 0 {
-                        if is_frag {
-                            if self.reliable_fragmentation.insert_fragment(&header, buffer)? {
-                                return Ok(ReadPayload::Parts(self.reliable_fragmentation.assemble(header.fragment_group_id)?));
+                        if header.packet_type.is_frag_variant() {
+                            if self
+                                .reliable_fragmentation
+                                .insert_fragment(&header, buffer)?
+                            {
+                                return Ok(ReadPayload::Parts(
+                                    self.reliable_fragmentation
+                                        .assemble(header.fragment_group_id)?,
+                                ));
                             }
                         } else {
                             return Ok(ReadPayload::Single(buffer));
@@ -203,15 +211,22 @@ impl Channel {
                 }
             }
             PacketType::PayloadUnreliable | PacketType::PayloadUnreliableFrag => {
-                let is_frag = header.packet_type.is_frag_variant();
-                //TODO: implement
-                if is_frag {
-                    todo!()
-                }
-
                 self.mark_sent_packets(header.ack, header.ack_bits, received_at);
+
                 if buffer.len() > 0 {
-                    return Ok(ReadPayload::Single(buffer));
+                    if header.packet_type.is_frag_variant() {
+                        if self
+                            .unreliable_fragmentation
+                            .insert_fragment(&header, buffer)?
+                        {
+                            return Ok(ReadPayload::Parts(
+                                self.unreliable_fragmentation
+                                    .assemble(header.fragment_group_id)?,
+                            ));
+                        }
+                    } else {
+                        return Ok(ReadPayload::Single(buffer));
+                    }
                 }
             }
             _ => {}
@@ -289,6 +304,7 @@ impl Channel {
         send_payload
     }
 
+    //TODO: test
     pub fn get_redelivery_packet(&mut self) -> Vec<Rc<SendPayload>> {
         let mut packets = Vec::new();
         let mut current_seq = self.local_seq.wrapping_sub(1);

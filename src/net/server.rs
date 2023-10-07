@@ -13,6 +13,8 @@ use super::{
 };
 
 pub enum ServerEvent<'a> {
+    NewConnection(u32),
+    ConnectionLost(u32),
     Connect,
     Receive(u32, &'a [u8]),
 }
@@ -58,7 +60,6 @@ impl Server {
     }
 
     pub fn read<'a>(&self, dest: &'a mut [u8]) -> anyhow::Result<ServerEvent<'a>> {
-        todo!("this still has to return the event..");
         match self.out_events.recv() {
             Ok(InternalServerEvent::Receive(client_id, buffer)) => {
                 if dest.len() < buffer.len() {
@@ -81,6 +82,12 @@ impl Server {
                 }
 
                 Ok(ServerEvent::Receive(client_id, &dest[..bytes_offset]))
+            }
+            Ok(InternalServerEvent::NewConnection(client_id)) => {
+                Ok(ServerEvent::NewConnection(client_id))
+            }
+            Ok(InternalServerEvent::ConnectionLost(client_id)) => {
+                Ok(ServerEvent::ConnectionLost(client_id))
             }
             Err(e) => panic!("error receiving {e}"),
             _ => panic!("unexpected event"),
