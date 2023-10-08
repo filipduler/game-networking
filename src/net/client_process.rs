@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     net::SocketAddr,
+    rc::Rc,
     sync::Arc,
     thread::{self},
     time::{Duration, Instant},
@@ -20,6 +21,7 @@ use super::{
     header::SendType,
     int_buffer::IntBuffer,
     packets::SendEvent,
+    send_buffer::SendPayload,
     socket::{Socket, UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
 };
@@ -37,6 +39,7 @@ pub struct ClientProcess {
     //API channels
     out_events: Sender<InternalClientEvent>,
     in_sends: Receiver<(SendEvent, SendType)>,
+    marked_packets_buf: Vec<Rc<SendPayload>>,
 }
 
 impl ClientProcess {
@@ -58,6 +61,7 @@ impl ClientProcess {
             send_queue: VecDeque::new(),
             in_sends,
             out_events,
+            marked_packets_buf: Vec::new(),
         })
     }
 
@@ -155,8 +159,7 @@ impl ClientProcess {
     }
 
     fn update(&mut self) {
-        if self.channel.send_ack {
-            self.channel.send_empty_ack(&mut self.send_queue);
-        }
+        self.channel
+            .update(&mut self.marked_packets_buf, &mut self.send_queue);
     }
 }

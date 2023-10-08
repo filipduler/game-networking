@@ -235,6 +235,33 @@ impl Channel {
         Ok(ReadPayload::None)
     }
 
+    pub fn update(
+        &mut self,
+        marked_packets: &mut Vec<Rc<SendPayload>>,
+        send_queue: &mut VecDeque<UdpSendEvent>,
+    ) {
+        self.send_buffer
+            .get_redelivery_packet(self.local_seq, marked_packets);
+        for packet in marked_packets {
+            let mut header = Header::new(
+                packet.seq,
+                self.session_key,
+                SendType::Reliable,
+                packet.frag,
+            );
+            self.write_header_ack_fields(&mut header);
+
+            todo!("fix this..");
+            //let buffer = header.create_packet(Some(&packet.buffer.used_data()));
+
+            //self.channel.send(packet.seq, buffer, send_queue);
+        }
+
+        if self.send_ack {
+            self.send_empty_ack(send_queue);
+        }
+    }
+
     fn update_remote_seq(&mut self, remote_seq: u16) -> bool {
         if Sequence::is_less_than(self.remote_seq, remote_seq) {
             //update to the new remote sequence
@@ -304,25 +331,6 @@ impl Channel {
         send_payload
     }
 
-    //TODO: test
-    pub fn get_redelivery_packet(&mut self) -> Vec<Rc<SendPayload>> {
-        let mut packets = Vec::new();
-        let mut current_seq = self.local_seq.wrapping_sub(1);
-
-        while let Some(send_buffer) = self.send_buffer.buffers.get_mut(current_seq) {
-            if let Some(sent_at) = send_buffer.sent_at {
-                if sent_at.elapsed() > self.send_buffer.trr_tracker.recommended_max_rtt() {
-                    packets.push(send_buffer.payload.clone());
-                    send_buffer.sent_at = None;
-                }
-            }
-
-            current_seq = current_seq.wrapping_sub(1);
-        }
-
-        packets
-    }
-
     pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
         self.send_buffer
             .mark_sent_packets(ack, ack_bitfield, received_at)
@@ -332,4 +340,10 @@ impl Channel {
     pub fn generate_ack_field(&self) -> u32 {
         self.send_buffer.generate_ack_field(self.remote_seq)
     }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
 }

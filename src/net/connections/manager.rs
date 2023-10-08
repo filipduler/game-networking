@@ -2,6 +2,7 @@ use std::{
     borrow::BorrowMut,
     collections::{HashMap, VecDeque},
     net::SocketAddr,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -17,6 +18,7 @@ pub enum ConnectionStatus {
 use crate::net::{
     array_pool::{ArrayPool, BufferPoolRef},
     int_buffer::IntBuffer,
+    send_buffer::SendPayload,
     socket::UdpSendEvent,
     PacketType, MAGIC_NUMBER_HEADER,
 };
@@ -29,6 +31,7 @@ pub struct ConnectionManager {
     connections: Vec<Option<Connection>>,
     addr_map: HashMap<SocketAddr, usize>,
     connect_requests: HashMap<SocketAddr, Identity>,
+    marked_packets_buf: Vec<Rc<SendPayload>>,
 }
 
 impl ConnectionManager {
@@ -39,6 +42,7 @@ impl ConnectionManager {
             addr_map: HashMap::with_capacity(max_clients),
             connections: (0..max_clients).map(|_| None).collect(),
             connect_requests: HashMap::new(),
+            marked_packets_buf: Vec::new(),
         }
     }
 
@@ -125,7 +129,7 @@ impl ConnectionManager {
 
     pub fn update(&mut self, send_queue: &mut VecDeque<UdpSendEvent>) {
         for connection in self.connections.iter_mut().flatten() {
-            connection.update(send_queue);
+            connection.update(&mut self.marked_packets_buf, send_queue);
         }
     }
 

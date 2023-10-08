@@ -74,8 +74,8 @@ pub struct BufferPoolRef {
 
 impl BufferPoolRef {
     #[inline]
-    pub fn len(&self) -> usize { 
-        self.used 
+    pub fn len(&self) -> usize {
+        self.used
     }
 
     #[inline]
@@ -113,8 +113,6 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use crate::net::array_pool::ArrayPool;
-
     use super::*;
 
     #[test]
@@ -133,7 +131,6 @@ mod tests {
 
     #[test]
     fn buffer_deref() {
-        
         let buffer = ArrayPool::rent(50);
         let data: &[u8] = &buffer;
         assert_eq!(data.len(), 50);
@@ -155,7 +152,7 @@ mod tests {
 
         buffer.left_shift(3);
         assert_eq!(buffer.len(), 2);
-        
+
         assert_eq!(buffer.deref(), &data[3..5]);
     }
 

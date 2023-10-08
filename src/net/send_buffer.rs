@@ -1,15 +1,21 @@
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use bit_field::BitField;
+use log::warn;
 
 use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
-use super::{array_pool::BufferPoolRef, rtt_tracker::RttTracker};
+use super::{array_pool::BufferPoolRef, rtt_tracker::RttTracker, BUFFER_WINDOW_SIZE};
+
+const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct SendBuffer {
     pub payload: Rc<SendPayload>,
     pub sent_at: Option<Instant>,
-    pub created_at: Instant,
 }
 
 pub struct SendPayload {
@@ -18,9 +24,14 @@ pub struct SendPayload {
     pub frag: bool,
 }
 
+pub struct ReceivedAck {
+    pub acked: bool,
+    pub packet_created_at: Instant,
+}
+
 pub struct SendBufferManager {
     pub buffers: SequenceBuffer<SendBuffer>,
-    pub received_acks: SequenceBuffer<bool>,
+    pub received_acks: SequenceBuffer<ReceivedAck>,
     pub trr_tracker: RttTracker,
 }
 
@@ -52,11 +63,17 @@ impl SendBufferManager {
                 frag,
             }),
             sent_at: None,
-            created_at: Instant::now(),
         };
 
         let payload = send_buffer.payload.clone();
 
+        self.received_acks.insert(
+            seq,
+            ReceivedAck {
+                acked: false,
+                packet_created_at: Instant::now(),
+            },
+        );
         self.buffers.insert(seq, send_buffer);
 
         payload
@@ -85,7 +102,12 @@ impl SendBufferManager {
             self.buffers.remove(ack);
         }
 
-        self.received_acks.insert(ack, true);
+        //this should be set
+        if let Some(received_ack) = self.received_acks.get_mut(ack) {
+            received_ack.acked = true;
+        } else {
+            warn!("receive ack not found on sequence {ack}");
+        }
     }
 
     //least significant bit is the remote_seq - 1 value
@@ -95,7 +117,7 @@ impl SendBufferManager {
         let mut seq = remote_seq.wrapping_sub(1);
         for pos in 0..32 {
             if let Some(value) = self.received_acks.get(seq) {
-                if *value {
+                if value.acked {
                     ack_bitfield.set_bit(pos, true);
                 }
             }
@@ -103,6 +125,42 @@ impl SendBufferManager {
         }
 
         ack_bitfield
+    }
+
+    pub fn get_redelivery_packet(
+        &mut self,
+        local_seq: u16,
+        marked_packets: &mut Vec<Rc<SendPayload>>,
+    ) {
+        //start at the last sent packet
+        let mut current_seq = local_seq;
+
+        //loop through all items in the current window
+        for i in 0..BUFFER_WINDOW_SIZE {
+            if let Some(received_ack) = self.received_acks.get(current_seq) {
+                //if the current packet timed out we can safely finish checking older ones because they expired too
+                if received_ack.packet_created_at.elapsed() > SEND_TIMEOUT {
+                    break;
+                }
+
+                if !received_ack.acked {
+                    if let Some(send_buffer) = self.buffers.get_mut(current_seq) {
+                        //we're only interested in packets that were sent already
+                        if let Some(sent_at) = send_buffer.sent_at {
+                            if sent_at.elapsed() > self.trr_tracker.recommended_max_rtt() {
+                                //requeue the item
+                                marked_packets.push(send_buffer.payload.clone());
+
+                                //mark it as not sent again
+                                send_buffer.sent_at = None;
+                            }
+                        }
+                    }
+                }
+            }
+
+            current_seq = current_seq.wrapping_sub(1);
+        }
     }
 }
 
@@ -123,22 +181,34 @@ mod tests {
 
         send_buffer.mark_sent_packets(5, ack_bitfield, &Instant::now());
 
-        assert!(*send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(0))
-            .unwrap());
-        assert!(*send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(1))
-            .unwrap());
-        assert!(*send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(15))
-            .unwrap());
-        assert!(*send_buffer
-            .received_acks
-            .get(4_u16.wrapping_sub(31))
-            .unwrap());
+        assert!(
+            send_buffer
+                .received_acks
+                .get(4_u16.wrapping_sub(0))
+                .unwrap()
+                .acked
+        );
+        assert!(
+            send_buffer
+                .received_acks
+                .get(4_u16.wrapping_sub(1))
+                .unwrap()
+                .acked
+        );
+        assert!(
+            send_buffer
+                .received_acks
+                .get(4_u16.wrapping_sub(15))
+                .unwrap()
+                .acked
+        );
+        assert!(
+            send_buffer
+                .received_acks
+                .get(4_u16.wrapping_sub(31))
+                .unwrap()
+                .acked
+        );
     }
 
     #[test]
@@ -147,18 +217,34 @@ mod tests {
         let remote_seq = 5_u16;
 
         let prev_remote_seq = remote_seq - 1;
-        send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(0), true);
-        send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(1), true);
-        send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(15), true);
-        send_buffer
-            .received_acks
-            .insert(prev_remote_seq.wrapping_sub(31), true);
+        send_buffer.received_acks.insert(
+            prev_remote_seq.wrapping_sub(0),
+            ReceivedAck {
+                acked: true,
+                packet_created_at: Instant::now(),
+            },
+        );
+        send_buffer.received_acks.insert(
+            prev_remote_seq.wrapping_sub(1),
+            ReceivedAck {
+                acked: true,
+                packet_created_at: Instant::now(),
+            },
+        );
+        send_buffer.received_acks.insert(
+            prev_remote_seq.wrapping_sub(15),
+            ReceivedAck {
+                acked: true,
+                packet_created_at: Instant::now(),
+            },
+        );
+        send_buffer.received_acks.insert(
+            prev_remote_seq.wrapping_sub(31),
+            ReceivedAck {
+                acked: true,
+                packet_created_at: Instant::now(),
+            },
+        );
 
         let mut ack_bitfield = 0;
         ack_bitfield.set_bit(0, true);
