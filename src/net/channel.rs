@@ -180,7 +180,7 @@ impl Channel {
                 let mut new_packet = false;
 
                 //always mark the acks
-                self.mark_sent_packets(header.ack, header.ack_bits, received_at);
+                self.mark_acked_packets(header.ack, header.ack_bits, received_at);
 
                 //if the sequence was not registered yet its a new packet
                 if self.update_remote_seq(header.seq) || self.received_packets.is_none(header.seq) {
@@ -209,7 +209,7 @@ impl Channel {
                 }
             }
             PacketType::PayloadUnreliable | PacketType::PayloadUnreliableFrag => {
-                self.mark_sent_packets(header.ack, header.ack_bits, received_at);
+                self.mark_acked_packets(header.ack, header.ack_bits, received_at);
 
                 if !buffer.is_empty() {
                     if header.packet_type.is_frag_variant() {
@@ -275,7 +275,7 @@ impl Channel {
         false
     }
 
-    pub fn write_header_ack_fields(&self, header: &mut Header) {
+    fn write_header_ack_fields(&self, header: &mut Header) {
         header.ack = self.remote_seq;
         header.ack_bits = self.generate_ack_field();
     }
@@ -335,9 +335,9 @@ impl Channel {
         send_payload.seq
     }
 
-    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
+    pub fn mark_acked_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
         self.send_buffer
-            .mark_sent_packets(ack, ack_bitfield, received_at)
+            .mark_acked_packets(ack, ack_bitfield, received_at)
     }
 
     //least significant bit is the remote_seq - 1 value

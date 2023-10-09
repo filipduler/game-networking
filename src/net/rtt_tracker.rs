@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
-const MAX_RTT: Duration = Duration::from_millis(100);
-const MIN_RTT: Duration = Duration::from_millis(10);
-const INFLATE_RTT_PERCENTAGE: u32 = 10; //10%
+pub const MAX_RTT: Duration = Duration::from_millis(100);
+pub const MIN_RTT: Duration = Duration::from_millis(10);
+pub const INFLATE_RTT_PERCENTAGE: u32 = 10; //10%
 
 pub struct RttTracker {
     total_rtt: Duration,

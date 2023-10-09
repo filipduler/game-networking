@@ -11,7 +11,7 @@ use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
 use super::{rtt_tracker::RttTracker, Bytes, BUFFER_WINDOW_SIZE};
 
-const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const SEND_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub struct SendBuffer {
     pub payload: Rc<SendPayload>,
@@ -75,7 +75,7 @@ impl SendBufferManager {
         payload
     }
 
-    pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
+    pub fn mark_acked_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {
         //only record the latest one..
         self.ack_packet(ack, Some(received_at));
 
@@ -162,9 +162,74 @@ impl SendBufferManager {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use bit_field::BitField;
 
+    use crate::net::rtt_tracker::MAX_RTT;
+
     use super::*;
+
+    #[test]
+    fn redelivery_packets_timeout() {
+        let mut send_buffer = SendBufferManager::new();
+        let mut packets = Vec::new();
+        let d = &[0];
+
+        send_buffer.push_send_buffer(0, d, false);
+        send_buffer.mark_sent(0, Instant::now());
+        send_buffer.push_send_buffer(1, d, false);
+        send_buffer.mark_sent(1, Instant::now());
+        thread::sleep(SEND_TIMEOUT);
+
+        send_buffer.push_send_buffer(2, d, false);
+        send_buffer.mark_sent(2, Instant::now() - MAX_RTT);
+        send_buffer.push_send_buffer(3, d, false);
+        send_buffer.mark_sent(3, Instant::now() - MAX_RTT);
+        send_buffer.push_send_buffer(4, d, false);
+        send_buffer.mark_sent(4, Instant::now() - MAX_RTT);
+
+        //because the enough time for redelivery hasn't passed we expect 0 redelivery packets
+        send_buffer.get_redelivery_packet(4, &mut packets);
+        assert_eq!(packets.len(), 3);
+    }
+
+    #[test]
+    fn redelivery_packets() {
+        let mut send_buffer = SendBufferManager::new();
+        let mut packets = Vec::new();
+        let d = &[0];
+
+        send_buffer.push_send_buffer(0, d, false);
+        send_buffer.push_send_buffer(1, d, false);
+        send_buffer.push_send_buffer(2, d, false);
+        send_buffer.push_send_buffer(3, d, false);
+        send_buffer.push_send_buffer(4, d, false);
+        send_buffer.push_send_buffer(5, d, false);
+        send_buffer.mark_sent(0, Instant::now());
+        send_buffer.mark_sent(1, Instant::now());
+        send_buffer.mark_sent(2, Instant::now());
+        send_buffer.mark_sent(3, Instant::now());
+        send_buffer.mark_sent(4, Instant::now());
+        //we're not marking sequence 5, so we don't expect it in the redelivery list
+
+        send_buffer.mark_acked_packets(2, 0, &Instant::now());
+        send_buffer.mark_acked_packets(3, 0, &Instant::now());
+        send_buffer.mark_acked_packets(4, 0, &Instant::now());
+
+        //because the enough time for redelivery hasn't passed we expect 0 redelivery packets
+        send_buffer.get_redelivery_packet(6, &mut packets);
+        assert_eq!(packets.len(), 0);
+
+        //sleep for the max RTT so they become available
+        thread::sleep(MAX_RTT);
+
+        send_buffer.get_redelivery_packet(6, &mut packets);
+        assert_eq!(packets.len(), 2);
+        assert_eq!(packets[0].seq, 1);
+        assert_eq!(packets[1].seq, 0);
+    }
+
     #[test]
     fn marking_received_bitfields() {
         let mut send_buffer = SendBufferManager::new();
@@ -175,7 +240,17 @@ mod tests {
         ack_bitfield.set_bit(15, true);
         ack_bitfield.set_bit(31, true);
 
-        send_buffer.mark_sent_packets(5, ack_bitfield, &Instant::now());
+        //prepare send buffers
+        let d = &[0];
+
+        let mut seq = 5;
+        for i in 0..33 {
+            send_buffer.push_send_buffer(seq, d, false);
+
+            seq = seq.wrapping_sub(1);
+        }
+
+        send_buffer.mark_acked_packets(5, ack_bitfield, &Instant::now());
 
         assert!(
             send_buffer
