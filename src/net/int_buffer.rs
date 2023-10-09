@@ -1,5 +1,3 @@
-use super::array_pool::BufferPoolRef;
-
 #[derive(Default)]
 pub struct IntBuffer {
     pub index: usize,

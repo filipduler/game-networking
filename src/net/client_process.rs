@@ -15,7 +15,6 @@ use mio::{net::UdpSocket, Token};
 use rand::Rng;
 
 use super::{
-    array_pool::{ArrayPool, BufferPoolRef},
     channel::{Channel, ChannelType, ReadPayload},
     connections,
     header::SendType,
@@ -23,13 +22,13 @@ use super::{
     packets::SendEvent,
     send_buffer::SendPayload,
     socket::{Socket, UdpEvent, UdpSendEvent},
-    PacketType, MAGIC_NUMBER_HEADER,
+    Bytes, PacketType, MAGIC_NUMBER_HEADER,
 };
 
 pub enum InternalClientEvent {
     Connect(u32),
-    Receive(BufferPoolRef),
-    ReceiveParts(Vec<BufferPoolRef>),
+    Receive(Bytes),
+    ReceiveParts(Vec<Bytes>),
 }
 
 pub struct ClientProcess {
@@ -125,7 +124,7 @@ impl ClientProcess {
     fn process_read_request(
         &mut self,
         addr: SocketAddr,
-        buffer: BufferPoolRef,
+        buffer: Bytes,
         received_at: &Instant,
     ) -> anyhow::Result<()> {
         match self.channel.read(buffer, received_at)? {

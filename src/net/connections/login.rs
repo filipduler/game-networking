@@ -8,7 +8,7 @@ use crossbeam_channel::{Receiver, Sender};
 use rand::Rng;
 
 use crate::net::{
-    array_pool::ArrayPool,
+    bytes,
     int_buffer::IntBuffer,
     socket::{Socket, UdpEvent, UdpSendEvent},
     PacketType, MAGIC_NUMBER_HEADER,
@@ -47,7 +47,7 @@ pub fn try_login(socket: &mut Socket) -> anyhow::Result<(u64, u32)> {
 fn send_connection_request(client_salt: u64, socket: &mut Socket) -> anyhow::Result<()> {
     let mut int_buffer = IntBuffer::default();
 
-    let mut buffer = ArrayPool::rent(13);
+    let mut buffer = bytes![13];
 
     int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
     int_buffer.write_u8(PacketType::ConnectionRequest as u8, &mut buffer);
@@ -108,7 +108,7 @@ fn send_challenge_response(
 ) -> anyhow::Result<()> {
     let mut int_buffer = IntBuffer::default();
 
-    let mut buffer = ArrayPool::rent(21);
+    let mut buffer = bytes![21];
 
     int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
     int_buffer.write_u8(PacketType::ChallengeResponse as u8, &mut buffer);

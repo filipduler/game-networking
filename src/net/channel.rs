@@ -13,7 +13,7 @@ use anyhow::bail;
 use crossbeam_channel::Sender;
 
 use super::{
-    array_pool::{ArrayPool, BufferPoolRef},
+    bytes,
     fragmentation_manager::FragmentationManager,
     header::{Header, SendType, HEADER_SIZE},
     int_buffer::{self, IntBuffer},
@@ -21,7 +21,7 @@ use super::{
     send_buffer::{SendBufferManager, SendPayload},
     sequence::{Sequence, SequenceBuffer, WindowSequenceBuffer},
     socket::UdpSendEvent,
-    PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER,
+    Bytes, PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER,
 };
 
 #[derive(PartialEq, Eq)]
@@ -31,8 +31,8 @@ pub enum ChannelType {
 }
 
 pub enum ReadPayload {
-    Single(BufferPoolRef),
-    Parts(Vec<BufferPoolRef>),
+    Single(Bytes),
+    Parts(Vec<Bytes>),
     None,
 }
 
@@ -131,7 +131,7 @@ impl Channel {
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<()> {
         let mut int_buffer = IntBuffer::default();
-        let mut buffer = ArrayPool::rent(4 + HEADER_SIZE);
+        let mut buffer = bytes![4 + HEADER_SIZE];
 
         int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
 
@@ -142,12 +142,7 @@ impl Channel {
         Ok(())
     }
 
-    fn send_tracking(
-        &mut self,
-        seq: u16,
-        buffer: BufferPoolRef,
-        send_queue: &mut VecDeque<UdpSendEvent>,
-    ) {
+    fn send_tracking(&mut self, seq: u16, buffer: Bytes, send_queue: &mut VecDeque<UdpSendEvent>) {
         send_queue.push_front(match self.mode {
             ChannelType::Client => UdpSendEvent::ClientTracking(buffer, seq),
             ChannelType::Server => UdpSendEvent::ServerTracking(buffer, self.addr, seq),
@@ -155,11 +150,7 @@ impl Channel {
         self.send_ack = false;
     }
 
-    fn send_non_tracking(
-        &mut self,
-        buffer: BufferPoolRef,
-        send_queue: &mut VecDeque<UdpSendEvent>,
-    ) {
+    fn send_non_tracking(&mut self, buffer: Bytes, send_queue: &mut VecDeque<UdpSendEvent>) {
         send_queue.push_front(match self.mode {
             ChannelType::Client => UdpSendEvent::Client(buffer),
             ChannelType::Server => UdpSendEvent::Server(buffer, self.addr),
@@ -169,13 +160,13 @@ impl Channel {
 
     pub fn read(
         &mut self,
-        mut buffer: BufferPoolRef,
+        mut buffer: Bytes,
         received_at: &Instant,
     ) -> anyhow::Result<ReadPayload> {
         let header = Header::read(&buffer)?;
 
         //remove the header data from the buffer
-        buffer.left_shift(header.get_header_size());
+        _ = buffer.drain(0..header.get_header_size());
 
         //validate session key
         if header.session_key != self.session_key {
@@ -200,7 +191,7 @@ impl Channel {
                 if new_packet {
                     self.received_packets.insert(header.seq, ());
 
-                    if buffer.len() > 0 {
+                    if !buffer.is_empty() {
                         if header.packet_type.is_frag_variant() {
                             if self
                                 .reliable_fragmentation
@@ -220,7 +211,7 @@ impl Channel {
             PacketType::PayloadUnreliable | PacketType::PayloadUnreliableFrag => {
                 self.mark_sent_packets(header.ack, header.ack_bits, received_at);
 
-                if buffer.len() > 0 {
+                if !buffer.is_empty() {
                     if header.packet_type.is_frag_variant() {
                         if self
                             .unreliable_fragmentation
@@ -292,7 +283,7 @@ impl Channel {
 
     pub fn create_unreliable_packet(
         &mut self,
-        buffer: &mut BufferPoolRef,
+        buffer: &mut Bytes,
         frag: bool,
         fragment_group_id: u16,
         fragment_id: u8,
@@ -318,7 +309,7 @@ impl Channel {
 
     pub fn create_send_buffer(
         &mut self,
-        buffer: &mut BufferPoolRef,
+        buffer: &mut Bytes,
         frag: bool,
         fragment_group_id: u16,
         fragment_id: u8,

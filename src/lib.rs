@@ -1,10 +1,11 @@
 #![allow(unused)]
 
+use net::Bytes;
 use rand::Rng;
 
 mod net;
 
-fn generate_random_u8_vector(length: usize) -> Vec<u8> {
+fn generate_random_u8_vector(length: usize) -> Bytes {
     let mut rng = rand::thread_rng();
     let mut result = Vec::with_capacity(length);
 

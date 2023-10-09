@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use strum_macros::FromRepr;
 
-mod array_pool;
+//mod array_pool;
 pub mod channel;
 pub mod client;
 pub mod client_process;
@@ -23,6 +23,14 @@ pub const MAGIC_NUMBER_HEADER: [u8; 4] = [1, 27, 25, 14];
 pub const BUFFER_SIZE: u16 = 1024;
 //always has to be less than BUFFER SIZE
 pub const BUFFER_WINDOW_SIZE: u16 = 256;
+
+pub type Bytes = Vec<u8>;
+macro_rules! bytes {
+    ($size:expr) => {{
+        vec![0_u8; $size]
+    }};
+}
+pub(crate) use bytes;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, FromRepr)]

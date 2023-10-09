@@ -1,4 +1,4 @@
-use std::{
+/*use std::{
     borrow::BorrowMut,
     cell::RefCell,
     collections::{HashMap, VecDeque},
@@ -11,7 +11,7 @@ use static_init::dynamic;
 const SIZE_STEP: usize = 128;
 
 #[dynamic(drop)]
-static mut POOL: HashMap<usize, Vec<Vec<u8>>> = HashMap::new();
+static mut POOL: HashMap<usize, Vec<Bytes>> = HashMap::new();*/
 
 /*
 A potential way of not using static pools could be if we create two structs:
@@ -22,7 +22,9 @@ A potential way of not using static pools could be if we create two structs:
  And on BufferPoolRef drop we can free it directly back into ArrayPool
 */
 
-pub struct ArrayPool {}
+//WARN: this isn't even any faster than the default allocator. Get rid of it. it gets useful at 4KB+ allocations
+
+/*pub struct ArrayPool {}
 
 impl ArrayPool {
     pub fn rent(size: usize) -> BufferPoolRef {
@@ -53,7 +55,7 @@ impl ArrayPool {
         buffer
     }
 
-    pub fn free(mut data: Vec<u8>) {
+    pub fn free(mut data: Bytes) {
         //info!("Freeing data of length {} at addr {:p}", data.len(), &data);
 
         assert!(
@@ -83,7 +85,7 @@ impl ArrayPool {
 }
 
 pub struct BufferPoolRef {
-    buffer: Vec<u8>,
+    buffer: Bytes,
     used: usize,
 }
 
@@ -171,17 +173,28 @@ mod tests {
         assert_eq!(buffer.deref(), &data[3..5]);
     }
 
-    /*#[test]
+    #[test]
     fn speed_test() {
         for i in 0..100000 {
             ArrayPool::free(vec![0_u8; SIZE_STEP]);
         }
-        let mut v = Vec::with_capacity(100000);
         let start = Instant::now();
+        let mut v = Vec::with_capacity(100000);
         for i in 0..100000 {
-            v.push(ArrayPool::rent(SIZE_STEP));
+            v.push(ArrayPool::rent(SIZE_STEP * 50));
         }
-        println!("elapsed {}", start.elapsed().as_millis());
-        assert!(start.elapsed() < Duration::from_millis(50));
-    }*/
-}
+        println!("elapsed1 {}", start.elapsed().as_millis());
+        assert!(start.elapsed() < Duration::from_millis(1000));
+
+        let start1 = Instant::now();
+        {
+            let mut v2 = Vec::with_capacity(100000);
+            for i in 0..100000 {
+                v2.push(vec![0_u8; SIZE_STEP * 50]);
+            }
+        }
+
+        println!("elapsed2 {}", start1.elapsed().as_millis());
+        assert!(start1.elapsed() < Duration::from_millis(1000));
+    }
+}*/

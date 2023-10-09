@@ -3,16 +3,16 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use super::{
-    array_pool::{ArrayPool, BufferPoolRef},
+    bytes,
     fragmentation_manager::{FragmentationManager, FRAGMENT_SIZE},
     header::{FRAG_HEADER_SIZE, HEADER_SIZE},
     int_buffer::IntBuffer,
-    MAGIC_NUMBER_HEADER,
+    Bytes, MAGIC_NUMBER_HEADER,
 };
 
 pub enum SendEvent {
-    Single(BufferPoolRef),
-    Fragmented(Vec<(BufferPoolRef)>),
+    Single(Bytes),
+    Fragmented(Vec<Bytes>),
 }
 
 //prepare the appropriate sized byte arrays so we don't have to reallocate and copy the data from this point on
@@ -39,7 +39,7 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
             int_buffer.reset();
             let buffer_size = chunk.len() + FRAG_HEADER_SIZE + 4;
 
-            let mut buffer = ArrayPool::rent(buffer_size);
+            let mut buffer = bytes![buffer_size];
             int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
             int_buffer.jump(FRAG_HEADER_SIZE);
             int_buffer.write_slice(chunk, &mut buffer);
@@ -51,7 +51,7 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
     } else {
         let buffer_size: usize = data_len + HEADER_SIZE + 4;
 
-        let mut buffer = ArrayPool::rent(buffer_size);
+        let mut buffer = bytes![buffer_size];
         int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
         int_buffer.jump(HEADER_SIZE);
         int_buffer.write_slice(data, &mut buffer);
@@ -76,20 +76,20 @@ mod tests {
 
     #[test]
     fn packet_exceeds_max_size() {
-        let buffer = ArrayPool::rent(MAX_FRAGMENT_SIZE + 1);
+        let buffer = bytes![MAX_FRAGMENT_SIZE + 1];
         assert!(construct_send_event(&buffer).is_err());
     }
 
     #[test]
     fn packet_max_size() {
-        let buffer = ArrayPool::rent(MAX_FRAGMENT_SIZE);
+        let buffer = bytes![MAX_FRAGMENT_SIZE];
 
         assert!(construct_send_event(&buffer).is_ok());
     }
 
     #[test]
     fn test_single_packet() {
-        let buffer = ArrayPool::rent(FRAGMENT_SIZE);
+        let buffer = bytes![FRAGMENT_SIZE];
 
         assert!(matches!(
             construct_send_event(&buffer).unwrap(),
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn test_fragmented_packet() {
-        let buffer = ArrayPool::rent(FRAGMENT_SIZE + 1);
+        let buffer = bytes![FRAGMENT_SIZE + 1];
 
         assert!(matches!(
             construct_send_event(&buffer).unwrap(),

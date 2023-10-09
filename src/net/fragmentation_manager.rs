@@ -10,11 +10,10 @@ use anyhow::bail;
 use crate::net::sequence::Sequence;
 
 use super::{
-    array_pool::BufferPoolRef,
     header::{Header, SendType},
     send_buffer::SendPayload,
     sequence::{SequenceBuffer, WindowSequenceBuffer},
-    BUFFER_SIZE, BUFFER_WINDOW_SIZE,
+    Bytes, BUFFER_SIZE, BUFFER_WINDOW_SIZE,
 };
 
 pub const FRAGMENT_SIZE: usize = 1024;
@@ -38,7 +37,7 @@ impl FragmentationManager {
         length > FRAGMENT_SIZE
     }
 
-    pub fn split_fragments(&mut self, chunks: Vec<BufferPoolRef>) -> anyhow::Result<Fragments> {
+    pub fn split_fragments(&mut self, chunks: Vec<Bytes>) -> anyhow::Result<Fragments> {
         if chunks.len() > u8::MAX as usize {
             bail!("cannot create a fragmented message from more than 255 chunks");
         }
@@ -63,11 +62,7 @@ impl FragmentationManager {
         Ok(fragments)
     }
 
-    pub fn insert_fragment(
-        &mut self,
-        header: &Header,
-        buffer: BufferPoolRef,
-    ) -> anyhow::Result<bool> {
+    pub fn insert_fragment(&mut self, header: &Header, buffer: Bytes) -> anyhow::Result<bool> {
         if header.fragment_id >= header.fragment_size {
             bail!("fragment id cannot be larger than the fragment size")
         }
@@ -117,7 +112,7 @@ impl FragmentationManager {
         Ok(fragment.is_done())
     }
 
-    pub fn assemble(&mut self, group_id: u16) -> anyhow::Result<Vec<BufferPoolRef>> {
+    pub fn assemble(&mut self, group_id: u16) -> anyhow::Result<Vec<Bytes>> {
         if !self.validate_group(group_id) {
             self.remove_fragment_group(group_id);
             bail!("fragment group has expired");
@@ -163,7 +158,7 @@ impl FragmentationManager {
 
 pub struct ReceiveFragments {
     pub group_id: u16,
-    pub chunks: VecDeque<Option<BufferPoolRef>>,
+    pub chunks: VecDeque<Option<Bytes>>,
     pub size: u8,
     pub current_size: u8,
     pub current_bytes: usize,
@@ -183,7 +178,7 @@ pub struct Fragments {
 }
 
 pub struct FragmentChunk {
-    pub buffer: BufferPoolRef,
+    pub buffer: Bytes,
     pub fragment_id: u8,
 }
 
@@ -191,7 +186,7 @@ pub struct FragmentChunk {
 mod tests {
     use std::{ops::Deref, thread};
 
-    use crate::net::array_pool::ArrayPool;
+    use crate::net::bytes;
 
     use super::*;
 
@@ -211,7 +206,7 @@ mod tests {
 
         let mut seq = 0;
         for i in 0..5 {
-            let mut data = ArrayPool::rent(3);
+            let mut data = bytes![3];
             data[0] = i;
             data[1] = i;
             data[2] = i;
@@ -242,7 +237,7 @@ mod tests {
         };
 
         for i in 0..u8::MAX {
-            let data = ArrayPool::rent(3);
+            let data = bytes![3];
 
             let status = fragment_manager.insert_fragment(&header, data).unwrap();
             header.fragment_id += 1;
@@ -272,7 +267,7 @@ mod tests {
         };
 
         fragment_manager
-            .insert_fragment(&header, ArrayPool::rent(3))
+            .insert_fragment(&header, bytes![3])
             .unwrap();
         header.fragment_id += 1;
 
@@ -280,7 +275,7 @@ mod tests {
         thread::sleep(GROUP_TIMEOUT + Duration::from_millis(250));
 
         assert!(fragment_manager
-            .insert_fragment(&header, ArrayPool::rent(3))
+            .insert_fragment(&header, bytes![3])
             .is_err());
         //check the fragment group was removed
         assert!(fragment_manager.fragments.is_none(header.fragment_group_id));
@@ -301,10 +296,10 @@ mod tests {
         };
 
         fragment_manager
-            .insert_fragment(&header, ArrayPool::rent(3))
+            .insert_fragment(&header, bytes![3])
             .unwrap();
         fragment_manager
-            .insert_fragment(&header, ArrayPool::rent(3))
+            .insert_fragment(&header, bytes![3])
             .unwrap();
 
         let frag = fragment_manager
@@ -330,7 +325,7 @@ mod tests {
         };
 
         fragment_manager
-            .insert_fragment(&header, ArrayPool::rent(3))
+            .insert_fragment(&header, bytes![3])
             .unwrap();
         header.fragment_id += 1;
 
@@ -338,7 +333,7 @@ mod tests {
         header.fragment_size -= 1;
 
         assert!(fragment_manager
-            .insert_fragment(&header, ArrayPool::rent(3))
+            .insert_fragment(&header, bytes![3])
             .is_err());
     }
 
@@ -348,7 +343,7 @@ mod tests {
 
         let mut frags = Vec::with_capacity(u8::MAX as usize);
         for chunk in 0..u8::MAX {
-            frags.push(ArrayPool::rent(FRAGMENT_SIZE));
+            frags.push(bytes![FRAGMENT_SIZE]);
         }
 
         let frags_result = fragment_manager.split_fragments(frags);
@@ -362,7 +357,7 @@ mod tests {
         let mut fragment_manager = FragmentationManager::new();
         let mut frags = Vec::with_capacity(u8::MAX as usize + 1);
         for chunk in 0..u8::MAX as usize + 1 {
-            frags.push(ArrayPool::rent(FRAGMENT_SIZE));
+            frags.push(bytes![FRAGMENT_SIZE]);
         }
 
         assert!(fragment_manager.split_fragments(frags).is_err());

@@ -9,11 +9,7 @@ use log::warn;
 
 use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
-use super::{
-    array_pool::{ArrayPool, BufferPoolRef},
-    rtt_tracker::RttTracker,
-    BUFFER_WINDOW_SIZE,
-};
+use super::{rtt_tracker::RttTracker, Bytes, BUFFER_WINDOW_SIZE};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -25,7 +21,7 @@ pub struct SendBuffer {
 pub struct SendPayload {
     pub seq: u16,
     //stores just the data without the header
-    pub buffer: BufferPoolRef,
+    pub buffer: Bytes,
     pub frag: bool,
 }
 
@@ -59,7 +55,7 @@ impl SendBufferManager {
         let send_buffer = SendBuffer {
             payload: Rc::new(SendPayload {
                 seq,
-                buffer: ArrayPool::copy_from_slice(data),
+                buffer: data.to_vec(),
                 frag,
             }),
             sent_at: None,

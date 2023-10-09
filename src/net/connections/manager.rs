@@ -16,10 +16,7 @@ pub enum ConnectionStatus {
 }
 
 use crate::net::{
-    array_pool::{ArrayPool, BufferPoolRef},
-    int_buffer::IntBuffer,
-    send_buffer::SendPayload,
-    socket::UdpSendEvent,
+    bytes, int_buffer::IntBuffer, send_buffer::SendPayload, socket::UdpSendEvent, Bytes,
     PacketType, MAGIC_NUMBER_HEADER,
 };
 
@@ -58,7 +55,7 @@ impl ConnectionManager {
     pub fn process_connect(
         &mut self,
         addr: &SocketAddr,
-        buffer: BufferPoolRef,
+        buffer: Bytes,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<ConnectionStatus> {
         if !self.has_free_slots() {
@@ -91,7 +88,7 @@ impl ConnectionManager {
             self.connect_requests.insert(*addr, identity.clone());
 
             //generate challenge packet
-            let mut buffer = ArrayPool::rent(21);
+            let mut buffer = bytes![21];
             int_buffer.reset();
 
             int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
@@ -106,11 +103,11 @@ impl ConnectionManager {
         Ok(ConnectionStatus::Rejected)
     }
 
-    fn finish_challenge(&mut self, addr: &SocketAddr) -> Option<BufferPoolRef> {
+    fn finish_challenge(&mut self, addr: &SocketAddr) -> Option<Bytes> {
         if let Some(connection_index) = self.get_free_slot_index() {
             //remove the identity from the connect requests
             if let Some(identity) = self.connect_requests.remove(addr) {
-                let mut buffer = ArrayPool::rent(9);
+                let mut buffer = bytes![9];
                 let mut int_buffer = IntBuffer::default();
 
                 int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);

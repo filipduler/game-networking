@@ -4,11 +4,7 @@ use anyhow::{anyhow, bail};
 
 use crate::net::PacketType;
 
-use super::{
-    array_pool::{ArrayPool, BufferPoolRef},
-    int_buffer::IntBuffer,
-    MAGIC_NUMBER_HEADER,
-};
+use super::{int_buffer::IntBuffer, MAGIC_NUMBER_HEADER};
 
 pub const HEADER_SIZE: usize = 17;
 pub const FRAG_HEADER_SIZE: usize = 21;

@@ -5,7 +5,6 @@ use crossbeam_channel::{Receiver, Sender};
 use log::error;
 
 use super::{
-    array_pool::ArrayPool,
     client_process::{ClientProcess, InternalClientEvent},
     fragmentation_manager::FragmentationManager,
     header::SendType,

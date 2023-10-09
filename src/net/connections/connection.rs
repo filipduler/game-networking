@@ -3,7 +3,6 @@ use std::{collections::VecDeque, rc::Rc, sync::Arc, time::Instant};
 use crossbeam_channel::Sender;
 
 use crate::net::{
-    array_pool::ArrayPool,
     channel::{Channel, ChannelType},
     header::{Header, SendType},
     send_buffer::SendPayload,

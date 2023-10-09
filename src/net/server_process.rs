@@ -12,12 +12,12 @@ use crossbeam_channel::{select, Receiver, Sender};
 use log::{error, info};
 
 use super::{
-    array_pool::{ArrayPool, BufferPoolRef},
     channel::ReadPayload,
     connections::{ConnectionManager, ConnectionStatus},
     header::SendType,
     packets::SendEvent,
     socket::{Socket, UdpEvent, UdpSendEvent},
+    Bytes,
 };
 
 pub enum InternalServerEvent {
@@ -28,9 +28,9 @@ pub enum InternalServerEvent {
     //connection disconnected
     ConnectionLost(u32),
     //received a packet that fits in a single fragment
-    Receive(u32, BufferPoolRef),
+    Receive(u32, Bytes),
     //received a fragment packet
-    ReceiveParts(u32, Vec<BufferPoolRef>),
+    ReceiveParts(u32, Vec<Bytes>),
 }
 
 pub struct ServerProcess {
@@ -126,7 +126,7 @@ impl ServerProcess {
     fn process_read_request(
         &mut self,
         addr: SocketAddr,
-        buffer: BufferPoolRef,
+        buffer: Bytes,
         received_at: &Instant,
     ) -> anyhow::Result<()> {
         //client exists, process the request

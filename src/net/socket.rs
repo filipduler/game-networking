@@ -12,24 +12,24 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::net::MAGIC_NUMBER_HEADER;
+use crate::net::{bytes, MAGIC_NUMBER_HEADER};
 
-use super::array_pool::{ArrayPool, BufferPoolRef};
 use super::send_buffer::SendPayload;
+use super::Bytes;
 
 const UDP_SOCKET: Token = Token(0);
 
 pub enum UdpEvent {
     SentServer(SocketAddr, u16, Instant),
     SentClient(u16, Instant),
-    Read(SocketAddr, BufferPoolRef, Instant),
+    Read(SocketAddr, Bytes, Instant),
 }
 
 pub enum UdpSendEvent {
-    ServerTracking(BufferPoolRef, SocketAddr, u16),
-    Server(BufferPoolRef, SocketAddr),
-    ClientTracking(BufferPoolRef, u16),
-    Client(BufferPoolRef),
+    ServerTracking(Bytes, SocketAddr, u16),
+    Server(Bytes, SocketAddr),
+    ClientTracking(Bytes, u16),
+    Client(Bytes),
 }
 
 pub struct Socket {
@@ -185,7 +185,7 @@ impl Socket {
                                                 self.addr
                                             );
                                             let data_size = packet_size - 4;
-                                            let mut buffer = ArrayPool::rent(data_size);
+                                            let mut buffer = bytes![data_size];
 
                                             //copy the data
                                             buffer[..data_size]
