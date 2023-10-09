@@ -249,15 +249,14 @@ impl Channel {
             );
             self.write_header_ack_fields(&mut header);
 
-            todo!("do..")
-            /*let mut buf = packet.buffer.clone();
-            let mut buffer = buf.borrow_mut();
+            let mut int_buffer = IntBuffer::default();
+            let mut buffer = bytes![4 + header.get_header_size() + packet.buffer.len()];
 
-            //rewrite the header
-            let mut int_buffer = IntBuffer::new_at(4);
-            header.write(&buffer, &mut int_buffer);
+            int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+            header.write(&mut buffer, &mut int_buffer);
+            int_buffer.write_slice(&packet.buffer, &mut buffer);
 
-            self.send_tracking(packet.seq, packet.buffer.clone(), send_queue);*/
+            self.send_tracking(packet.seq, buffer, send_queue);
         }
 
         if self.send_ack {
