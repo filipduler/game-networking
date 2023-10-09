@@ -1,5 +1,12 @@
 use std::{
-    cell::RefCell, collections::VecDeque, net::SocketAddr, rc::Rc, sync::Arc, time::Instant,
+    borrow::BorrowMut,
+    cell::RefCell,
+    collections::VecDeque,
+    net::SocketAddr,
+    ops::{Deref, DerefMut},
+    rc::Rc,
+    sync::Arc,
+    time::Instant,
 };
 
 use anyhow::bail;
@@ -17,7 +24,7 @@ use super::{
     PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub enum ChannelType {
     Client,
     Server,
@@ -70,20 +77,20 @@ impl Channel {
     ) -> anyhow::Result<()> {
         match send_event {
             SendEvent::Single(mut buffer) => {
-                let payload = self.create_send_buffer(buffer, false, 0, 0, 0);
-                self.send_tracking(payload.seq, payload.buffer.clone(), send_queue);
+                let seq: u16 = self.create_send_buffer(&mut buffer, false, 0, 0, 0);
+                self.send_tracking(seq, buffer, send_queue);
             }
             SendEvent::Fragmented(fragments) => {
                 let fragments = self.reliable_fragmentation.split_fragments(fragments)?;
                 for mut chunk in fragments.chunks {
-                    let payload = self.create_send_buffer(
-                        chunk.buffer,
+                    let seq: u16 = self.create_send_buffer(
+                        &mut chunk.buffer,
                         true,
                         fragments.group_id,
                         chunk.fragment_id,
                         fragments.chunk_count,
                     );
-                    self.send_tracking(payload.seq, payload.buffer.clone(), send_queue);
+                    self.send_tracking(seq, chunk.buffer, send_queue);
                 }
             }
         };
@@ -135,10 +142,10 @@ impl Channel {
         Ok(())
     }
 
-    pub fn send_tracking(
+    fn send_tracking(
         &mut self,
         seq: u16,
-        buffer: Rc<RefCell<BufferPoolRef>>,
+        buffer: BufferPoolRef,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) {
         send_queue.push_front(match self.mode {
@@ -148,7 +155,7 @@ impl Channel {
         self.send_ack = false;
     }
 
-    pub fn send_non_tracking(
+    fn send_non_tracking(
         &mut self,
         buffer: BufferPoolRef,
         send_queue: &mut VecDeque<UdpSendEvent>,
@@ -251,10 +258,15 @@ impl Channel {
             );
             self.write_header_ack_fields(&mut header);
 
-            todo!("fix this..");
-            //let buffer = header.create_packet(Some(&packet.buffer.used_data()));
+            todo!("do..")
+            /*let mut buf = packet.buffer.clone();
+            let mut buffer = buf.borrow_mut();
 
-            //self.channel.send(packet.seq, buffer, send_queue);
+            //rewrite the header
+            let mut int_buffer = IntBuffer::new_at(4);
+            header.write(&buffer, &mut int_buffer);
+
+            self.send_tracking(packet.seq, packet.buffer.clone(), send_queue);*/
         }
 
         if self.send_ack {
@@ -306,12 +318,12 @@ impl Channel {
 
     pub fn create_send_buffer(
         &mut self,
-        mut buffer: BufferPoolRef,
+        buffer: &mut BufferPoolRef,
         frag: bool,
         fragment_group_id: u16,
         fragment_id: u8,
         fragment_size: u8,
-    ) -> Rc<SendPayload> {
+    ) -> u16 {
         let mut header = Header::new(self.local_seq, self.session_key, SendType::Reliable, frag);
         header.fragment_group_id = fragment_group_id;
         header.fragment_id = fragment_id;
@@ -320,15 +332,17 @@ impl Channel {
         self.write_header_ack_fields(&mut header);
 
         let mut int_buffer = IntBuffer::new_at(4);
-        header.write(&mut buffer, &mut int_buffer);
+        header.write(buffer, &mut int_buffer);
 
-        let send_payload = self
-            .send_buffer
-            .push_send_buffer(self.local_seq, buffer, frag);
+        let send_payload = self.send_buffer.push_send_buffer(
+            self.local_seq,
+            &buffer[4 + header.get_header_size()..], //pass the just the data
+            frag,
+        );
 
         Sequence::increment(&mut self.local_seq);
 
-        send_payload
+        send_payload.seq
     }
 
     pub fn mark_sent_packets(&mut self, ack: u16, ack_bitfield: u32, received_at: &Instant) {

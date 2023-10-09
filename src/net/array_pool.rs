@@ -13,6 +13,15 @@ const SIZE_STEP: usize = 128;
 #[dynamic(drop)]
 static mut POOL: HashMap<usize, Vec<Vec<u8>>> = HashMap::new();
 
+/*
+A potential way of not using static pools could be if we create two structs:
+ - ArrayPool which contains an vec of byte arrays wrapped in a mutex
+ - ArrayPoolManager - which has an Arc<ArrayPool> inside it
+
+ The ArrayPoolManager actually generates new BufferPoolRef objects and clones the Arc<ArrayPool> with it
+ And on BufferPoolRef drop we can free it directly back into ArrayPool
+*/
+
 pub struct ArrayPool {}
 
 impl ArrayPool {
@@ -36,6 +45,12 @@ impl ArrayPool {
             buffer: vec![0_u8; rounded_size],
             used: size,
         }
+    }
+
+    pub fn copy_from_slice(data: &[u8]) -> BufferPoolRef {
+        let mut buffer = ArrayPool::rent(data.len());
+        buffer.copy_from_slice(data);
+        buffer
     }
 
     pub fn free(mut data: Vec<u8>) {

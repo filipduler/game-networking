@@ -26,9 +26,9 @@ pub enum UdpEvent {
 }
 
 pub enum UdpSendEvent {
-    ServerTracking(Rc<RefCell<BufferPoolRef>>, SocketAddr, u16),
+    ServerTracking(BufferPoolRef, SocketAddr, u16),
     Server(BufferPoolRef, SocketAddr),
-    ClientTracking(Rc<RefCell<BufferPoolRef>>, u16),
+    ClientTracking(BufferPoolRef, u16),
     Client(BufferPoolRef),
 }
 
@@ -120,17 +120,15 @@ impl Socket {
                             while let Some(packet) = self.send_queue.pop_back() {
                                 let send_result = match packet {
                                     UdpSendEvent::ServerTracking(ref data, addr, _) => {
-                                        self.socket.send_to(data.borrow().deref(), addr)
+                                        self.socket.send_to(data, addr)
                                     }
                                     UdpSendEvent::ClientTracking(ref data, _) => {
-                                        self.socket.send(data.borrow().deref())
+                                        self.socket.send(data)
                                     }
                                     UdpSendEvent::Server(ref data, addr) => {
                                         self.socket.send_to(data, addr)
                                     }
-                                    UdpSendEvent::Client(ref data) => {
-                                        self.socket.send(data)
-                                    }
+                                    UdpSendEvent::Client(ref data) => self.socket.send(data),
                                 };
 
                                 match send_result {
