@@ -19,7 +19,7 @@ fn generate_random_u8_vector(length: usize) -> Bytes {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
+    use std::{env, thread, time::Duration};
 
     use crate::net::{
         client::Client,
@@ -42,11 +42,6 @@ mod tests {
 
         let mut read_buf = [0_u8; 1 << 16];
 
-        let data = generate_random_u8_vector(1160);
-
-        //to establish connection
-        client.send(&data, SendType::Reliable).unwrap();
-
         assert!(
             matches!(
                 server.read(&mut read_buf).unwrap(),
@@ -55,9 +50,13 @@ mod tests {
             "expected new connection"
         );
 
-        //server.send(client_addr, &data, SendType::Reliable).unwrap();
-        loop {
-            let n = client.read(&mut read_buf).unwrap();
-        }
+        let data = generate_random_u8_vector(1160);
+
+        assert!(client.send(&data, SendType::Reliable).is_ok());
+        thread::sleep(Duration::from_secs(1));
+        /*match server.read(&mut read_buf).unwrap() {
+            ServerEvent::Receive(1, d) => assert_eq!(data, d),
+            _ => panic!(""),
+        }*/
     }
 }

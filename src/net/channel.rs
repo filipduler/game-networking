@@ -240,7 +240,7 @@ impl Channel {
     ) {
         self.send_buffer
             .get_redelivery_packet(self.local_seq, marked_packets);
-        for packet in marked_packets {
+        while let Some(packet) = marked_packets.pop() {
             let mut header = Header::new(
                 packet.seq,
                 self.session_key,

@@ -79,10 +79,13 @@ impl SendBufferManager {
         //only record the latest one..
         self.ack_packet(ack, Some(received_at));
 
-        for bit_pos in 0..32_u16 {
-            if ack_bitfield.get_bit(bit_pos as usize) {
-                let seq = ack.wrapping_sub(bit_pos).wrapping_sub(1);
-                self.ack_packet(seq, None);
+        //if its 0 that means nothing is acked..
+        if ack_bitfield > 0 {
+            for bit_pos in 0..32_u16 {
+                if ack_bitfield.get_bit(bit_pos as usize) {
+                    let seq = ack.wrapping_sub(bit_pos).wrapping_sub(1);
+                    self.ack_packet(seq, None);
+                }
             }
         }
     }
@@ -101,8 +104,6 @@ impl SendBufferManager {
         //this should be set
         if let Some(received_ack) = self.received_acks.get_mut(ack) {
             received_ack.acked = true;
-        } else {
-            warn!("receive ack not found on sequence {ack}");
         }
     }
 
