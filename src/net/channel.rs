@@ -10,7 +10,10 @@ use std::{
 };
 
 use anyhow::bail;
+use bit_field::BitField;
 use crossbeam_channel::Sender;
+use log::{debug, info};
+use strum_macros::Display;
 
 use super::{
     bytes,
@@ -24,7 +27,7 @@ use super::{
     Bytes, PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER,
 };
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Display)]
 pub enum ChannelType {
     Client,
     Server,
@@ -46,7 +49,7 @@ pub struct Channel {
     pub send_ack: bool,
     //buffer of sent packets
     pub send_buffer: SendBufferManager,
-    //tracking received packets for preventing emitting duplicate packets
+    //tracking received packets for preventing emitting duplicate packets and generating acks
     received_packets: WindowSequenceBuffer<()>,
     //fragmentation
     reliable_fragmentation: FragmentationManager,
@@ -197,6 +200,10 @@ impl Channel {
                                 .reliable_fragmentation
                                 .insert_fragment(&header, buffer)?
                             {
+                                info!(
+                                    "finished constructing new fragment with id {}",
+                                    header.fragment_group_id
+                                );
                                 return Ok(ReadPayload::Parts(
                                     self.reliable_fragmentation
                                         .assemble(header.fragment_group_id)?,
@@ -240,6 +247,7 @@ impl Channel {
     ) {
         self.send_buffer
             .get_redelivery_packet(self.local_seq, marked_packets);
+
         while let Some(packet) = marked_packets.pop() {
             let mut header = Header::new(
                 packet.seq,
@@ -342,7 +350,16 @@ impl Channel {
 
     //least significant bit is the remote_seq - 1 value
     pub fn generate_ack_field(&self) -> u32 {
-        self.send_buffer.generate_ack_field(self.remote_seq)
+        let mut ack_bitfield = 0;
+
+        let mut seq = self.remote_seq.wrapping_sub(1);
+        for pos in 0..32 {
+            if self.received_packets.is_some(seq) {
+                ack_bitfield.set_bit(pos, true);
+            }
+            seq = seq.wrapping_sub(1);
+        }
+        ack_bitfield
     }
 }
 
@@ -350,4 +367,32 @@ impl Channel {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn generating_received_bitfields() {
+        let mut channel = Channel::new("127.0.0.1:9090".parse().unwrap(), 0, ChannelType::Client);
+        channel.remote_seq = 5;
+
+        let prev_remote_seq = channel.remote_seq - 1;
+        channel
+            .received_packets
+            .insert(prev_remote_seq.wrapping_sub(0), ());
+        channel
+            .received_packets
+            .insert(prev_remote_seq.wrapping_sub(1), ());
+        channel
+            .received_packets
+            .insert(prev_remote_seq.wrapping_sub(15), ());
+        channel
+            .received_packets
+            .insert(prev_remote_seq.wrapping_sub(31), ());
+
+        let mut ack_bitfield = 0;
+        ack_bitfield.set_bit(0, true);
+        ack_bitfield.set_bit(1, true);
+        ack_bitfield.set_bit(15, true);
+        ack_bitfield.set_bit(31, true);
+
+        assert_eq!(channel.generate_ack_field(), ack_bitfield);
+    }
 }

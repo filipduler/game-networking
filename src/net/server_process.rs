@@ -174,6 +174,7 @@ impl ServerProcess {
             if let Some(client_id) = self.connection_manager.disconnect_connection(addr) {
                 self.out_events
                     .send(InternalServerEvent::ConnectionLost(client_id))?;
+                info!("Disconnected client {client_id}")
             }
         }
 

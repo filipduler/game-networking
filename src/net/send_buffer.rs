@@ -5,7 +5,7 @@ use std::{
 };
 
 use bit_field::BitField;
-use log::warn;
+use log::{debug, warn};
 
 use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
@@ -105,23 +105,6 @@ impl SendBufferManager {
         if let Some(received_ack) = self.received_acks.get_mut(ack) {
             received_ack.acked = true;
         }
-    }
-
-    //least significant bit is the remote_seq - 1 value
-    pub fn generate_ack_field(&self, remote_seq: u16) -> u32 {
-        let mut ack_bitfield = 0;
-
-        let mut seq = remote_seq.wrapping_sub(1);
-        for pos in 0..32 {
-            if let Some(value) = self.received_acks.get(seq) {
-                if value.acked {
-                    ack_bitfield.set_bit(pos, true);
-                }
-            }
-            seq = seq.wrapping_sub(1);
-        }
-
-        ack_bitfield
     }
 
     pub fn get_redelivery_packet(
@@ -281,49 +264,5 @@ mod tests {
                 .unwrap()
                 .acked
         );
-    }
-
-    #[test]
-    fn generating_received_bitfields() {
-        let mut send_buffer = SendBufferManager::new();
-        let remote_seq = 5_u16;
-
-        let prev_remote_seq = remote_seq - 1;
-        send_buffer.received_acks.insert(
-            prev_remote_seq.wrapping_sub(0),
-            ReceivedAck {
-                acked: true,
-                packet_created_at: Instant::now(),
-            },
-        );
-        send_buffer.received_acks.insert(
-            prev_remote_seq.wrapping_sub(1),
-            ReceivedAck {
-                acked: true,
-                packet_created_at: Instant::now(),
-            },
-        );
-        send_buffer.received_acks.insert(
-            prev_remote_seq.wrapping_sub(15),
-            ReceivedAck {
-                acked: true,
-                packet_created_at: Instant::now(),
-            },
-        );
-        send_buffer.received_acks.insert(
-            prev_remote_seq.wrapping_sub(31),
-            ReceivedAck {
-                acked: true,
-                packet_created_at: Instant::now(),
-            },
-        );
-
-        let mut ack_bitfield = 0;
-        ack_bitfield.set_bit(0, true);
-        ack_bitfield.set_bit(1, true);
-        ack_bitfield.set_bit(15, true);
-        ack_bitfield.set_bit(31, true);
-
-        assert_eq!(send_buffer.generate_ack_field(remote_seq), ack_bitfield);
     }
 }

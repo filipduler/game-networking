@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        env::set_var("RUST_LOG", "INFO");
+        env::set_var("RUST_LOG", "DEBUG");
         env_logger::init();
 
         let client_addr = "127.0.0.1:9091".parse().unwrap();
@@ -53,7 +53,7 @@ mod tests {
         let data = generate_random_u8_vector(1160);
 
         assert!(client.send(&data, SendType::Reliable).is_ok());
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(120));
         /*match server.read(&mut read_buf).unwrap() {
             ServerEvent::Receive(1, d) => assert_eq!(data, d),
             _ => panic!(""),
