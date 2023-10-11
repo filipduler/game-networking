@@ -185,7 +185,7 @@ impl Socket {
                                                 self.addr
                                             );
                                             let data_size = packet_size - 4;
-                                            let mut buffer = bytes![data_size];
+                                            let mut buffer = bytes!(data_size);
 
                                             //copy the data
                                             buffer[..data_size]

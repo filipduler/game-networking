@@ -71,34 +71,59 @@ mod tests {
 
     #[test]
     fn packet_exceeds_max_size() {
-        let buffer = bytes![MAX_FRAGMENT_SIZE + 1];
+        let buffer = bytes!(MAX_FRAGMENT_SIZE + 1);
         assert!(construct_send_event(&buffer).is_err());
     }
 
     #[test]
     fn packet_max_size() {
-        let buffer = bytes![MAX_FRAGMENT_SIZE];
+        let buffer = bytes!(MAX_FRAGMENT_SIZE);
 
         assert!(construct_send_event(&buffer).is_ok());
     }
 
     #[test]
     fn test_single_packet() {
-        let buffer = bytes![FRAGMENT_SIZE];
+        let mut buffer = bytes!(FRAGMENT_SIZE);
+        buffer[FRAGMENT_SIZE - 1] = 3;
 
-        assert!(matches!(
-            construct_send_event(&buffer).unwrap(),
-            SendEvent::Single(buffer)
-        ));
+        let send = construct_send_event(&buffer);
+
+        assert!(send.is_ok());
+        let send = send.unwrap();
+
+        assert!(matches!(send, SendEvent::Single(_)));
+        if let SendEvent::Single(packet) = send {
+            assert_eq!(packet.len(), buffer.len() + HEADER_SIZE + 4);
+            assert_eq!(
+                //we need to remove the header to get the actual data
+                &packet[HEADER_SIZE + 4..],
+                &buffer
+            );
+        }
     }
 
     #[test]
     fn test_fragmented_packet() {
-        let buffer = bytes![FRAGMENT_SIZE + 1];
+        let mut buffer = bytes!(FRAGMENT_SIZE + 1);
+        buffer[FRAGMENT_SIZE] = 3;
 
-        assert!(matches!(
-            construct_send_event(&buffer).unwrap(),
-            SendEvent::Fragmented(buffer)
-        ));
+        let send = construct_send_event(&buffer);
+
+        assert!(send.is_ok());
+        let send = send.unwrap();
+
+        assert!(matches!(send, SendEvent::Fragmented(_)));
+        if let SendEvent::Fragmented(chunks) = send {
+            assert_eq!(chunks.len(), 2);
+            assert_eq!(
+                //we need to remove the header to get the actual data
+                &chunks
+                    .into_iter()
+                    .flat_map(|f| f[4 + FRAG_HEADER_SIZE..].to_vec())
+                    .collect::<Vec<u8>>(),
+                &buffer
+            );
+        }
     }
 }

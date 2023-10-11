@@ -206,7 +206,7 @@ mod tests {
 
         let mut seq = 0;
         for i in 0..5 {
-            let mut data = bytes![3];
+            let mut data = bytes!(3);
             data[0] = i;
             data[1] = i;
             data[2] = i;
@@ -237,7 +237,7 @@ mod tests {
         };
 
         for i in 0..u8::MAX {
-            let data = bytes![3];
+            let data = bytes!(3);
 
             let status = fragment_manager.insert_fragment(&header, data).unwrap();
             header.fragment_id += 1;
@@ -267,7 +267,7 @@ mod tests {
         };
 
         fragment_manager
-            .insert_fragment(&header, bytes![3])
+            .insert_fragment(&header, bytes!(3))
             .unwrap();
         header.fragment_id += 1;
 
@@ -275,7 +275,7 @@ mod tests {
         thread::sleep(GROUP_TIMEOUT + Duration::from_millis(250));
 
         assert!(fragment_manager
-            .insert_fragment(&header, bytes![3])
+            .insert_fragment(&header, bytes!(3))
             .is_err());
         //check the fragment group was removed
         assert!(fragment_manager.fragments.is_none(header.fragment_group_id));
@@ -296,10 +296,10 @@ mod tests {
         };
 
         fragment_manager
-            .insert_fragment(&header, bytes![3])
+            .insert_fragment(&header, bytes!(3))
             .unwrap();
         fragment_manager
-            .insert_fragment(&header, bytes![3])
+            .insert_fragment(&header, bytes!(3))
             .unwrap();
 
         let frag = fragment_manager
@@ -325,7 +325,7 @@ mod tests {
         };
 
         fragment_manager
-            .insert_fragment(&header, bytes![3])
+            .insert_fragment(&header, bytes!(3))
             .unwrap();
         header.fragment_id += 1;
 
@@ -333,7 +333,7 @@ mod tests {
         header.fragment_size -= 1;
 
         assert!(fragment_manager
-            .insert_fragment(&header, bytes![3])
+            .insert_fragment(&header, bytes!(3))
             .is_err());
     }
 
@@ -343,7 +343,7 @@ mod tests {
 
         let mut frags = Vec::with_capacity(u8::MAX as usize);
         for chunk in 0..u8::MAX {
-            frags.push(bytes![FRAGMENT_SIZE]);
+            frags.push(bytes!(FRAGMENT_SIZE));
         }
 
         let frags_result = fragment_manager.split_fragments(frags);
@@ -357,7 +357,7 @@ mod tests {
         let mut fragment_manager = FragmentationManager::new();
         let mut frags = Vec::with_capacity(u8::MAX as usize + 1);
         for chunk in 0..u8::MAX as usize + 1 {
-            frags.push(bytes![FRAGMENT_SIZE]);
+            frags.push(bytes!(FRAGMENT_SIZE));
         }
 
         assert!(fragment_manager.split_fragments(frags).is_err());
