@@ -16,7 +16,7 @@ use log::{debug, info};
 use strum_macros::Display;
 
 use super::{
-    bytes,
+    bytes, bytes_with_header,
     fragmentation_manager::FragmentationManager,
     header::{Header, SendType, HEADER_SIZE},
     int_buffer::{self, IntBuffer},
@@ -133,10 +133,8 @@ impl Channel {
         &mut self,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<()> {
-        let mut int_buffer = IntBuffer::default();
-        let mut buffer = bytes![4 + HEADER_SIZE];
-
-        int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
+        let mut int_buffer = IntBuffer::new_at(4);
+        let mut buffer = bytes_with_header!(HEADER_SIZE);
 
         self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
 
@@ -257,10 +255,9 @@ impl Channel {
             );
             self.write_header_ack_fields(&mut header);
 
-            let mut int_buffer = IntBuffer::default();
-            let mut buffer = bytes![4 + header.get_header_size() + packet.buffer.len()];
+            let mut int_buffer = IntBuffer::new_at(4);
+            let mut buffer = bytes_with_header!(header.get_header_size() + packet.buffer.len());
 
-            int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
             header.write(&mut buffer, &mut int_buffer);
             int_buffer.write_slice(&packet.buffer, &mut buffer);
 

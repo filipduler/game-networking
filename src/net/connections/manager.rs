@@ -16,8 +16,8 @@ pub enum ConnectionStatus {
 }
 
 use crate::net::{
-    bytes, int_buffer::IntBuffer, send_buffer::SendPayload, socket::UdpSendEvent, Bytes,
-    PacketType, MAGIC_NUMBER_HEADER,
+    bytes, bytes_with_header, int_buffer::IntBuffer, send_buffer::SendPayload,
+    socket::UdpSendEvent, Bytes, PacketType, MAGIC_NUMBER_HEADER,
 };
 
 use super::{identity::Identity, Connection};
@@ -88,10 +88,9 @@ impl ConnectionManager {
             self.connect_requests.insert(*addr, identity.clone());
 
             //generate challenge packet
-            let mut buffer = bytes![21];
-            int_buffer.reset();
+            let mut buffer = bytes_with_header!(17);
+            int_buffer.goto(4);
 
-            int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
             int_buffer.write_u8(PacketType::Challenge as u8, &mut buffer);
             int_buffer.write_u64(client_salt, &mut buffer);
             int_buffer.write_u64(identity.server_salt, &mut buffer);
@@ -107,10 +106,9 @@ impl ConnectionManager {
         if let Some(connection_index) = self.get_free_slot_index() {
             //remove the identity from the connect requests
             if let Some(identity) = self.connect_requests.remove(addr) {
-                let mut buffer = bytes![9];
-                let mut int_buffer = IntBuffer::default();
+                let mut buffer = bytes_with_header!(5);
+                let mut int_buffer = IntBuffer::new_at(4);
 
-                int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
                 int_buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut buffer);
                 int_buffer.write_u32(identity.id, &mut buffer);
 

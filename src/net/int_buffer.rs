@@ -15,6 +15,11 @@ impl IntBuffer {
     }
 
     #[inline]
+    pub fn goto(&mut self, index: usize) {
+        self.index = index
+    }
+
+    #[inline]
     pub fn reset(&mut self) {
         self.index = 0;
     }

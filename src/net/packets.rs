@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::bail;
 
 use super::{
-    bytes,
+    bytes, bytes_with_header,
     fragmentation_manager::{FragmentationManager, FRAGMENT_SIZE},
     header::{FRAG_HEADER_SIZE, HEADER_SIZE},
     int_buffer::IntBuffer,
@@ -36,12 +36,9 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
         let mut fragments = Vec::with_capacity(chunk_count);
 
         for chunk in chunks {
-            int_buffer.reset();
-            let buffer_size = chunk.len() + FRAG_HEADER_SIZE + 4;
+            int_buffer.goto(4 + FRAG_HEADER_SIZE);
 
-            let mut buffer = bytes![buffer_size];
-            int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
-            int_buffer.jump(FRAG_HEADER_SIZE);
+            let mut buffer = bytes_with_header!(chunk.len() + FRAG_HEADER_SIZE);
             int_buffer.write_slice(chunk, &mut buffer);
 
             fragments.push(buffer);
@@ -49,11 +46,9 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
 
         Ok(SendEvent::Fragmented(fragments))
     } else {
-        let buffer_size: usize = data_len + HEADER_SIZE + 4;
+        int_buffer.goto(4 + HEADER_SIZE);
 
-        let mut buffer = bytes![buffer_size];
-        int_buffer.write_slice(&MAGIC_NUMBER_HEADER, &mut buffer);
-        int_buffer.jump(HEADER_SIZE);
+        let mut buffer = bytes_with_header!(data_len + HEADER_SIZE);
         int_buffer.write_slice(data, &mut buffer);
 
         Ok(SendEvent::Single(buffer))

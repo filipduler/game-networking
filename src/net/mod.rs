@@ -30,7 +30,15 @@ macro_rules! bytes {
         vec![0_u8; $size]
     }};
 }
-pub(crate) use bytes;
+
+macro_rules! bytes_with_header {
+    ($payload_size:expr) => {{
+        let mut buffer = vec![0_u8; $payload_size + 4];
+        buffer[..4].copy_from_slice(&MAGIC_NUMBER_HEADER);
+        buffer
+    }};
+}
+pub(crate) use {bytes, bytes_with_header};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, FromRepr)]
