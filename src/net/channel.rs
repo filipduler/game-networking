@@ -329,9 +329,9 @@ impl Channel {
 
         self.write_header_ack_fields(&mut header);
 
-        if self.mode == ChannelType::Client {
+        /*if self.mode == ChannelType::Client {
             info!("sent header {:?}", header);
-        }
+        }*/
 
         let mut int_buffer = IntBuffer::new_at(4);
         header.write(buffer, &mut int_buffer);

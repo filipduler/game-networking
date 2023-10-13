@@ -72,7 +72,11 @@ impl FragmentationManager {
         }
 
         if header.fragment_id >= header.fragment_size {
-            bail!("fragment id cannot be larger than the fragment size")
+            bail!(
+                "fragment id ({}) cannot be larger than the fragment size ({})",
+                header.fragment_id,
+                header.fragment_size
+            )
         }
 
         //insert the fragment buffer if it doesn't exist yet

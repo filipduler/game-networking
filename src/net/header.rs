@@ -108,14 +108,6 @@ impl Header {
             fragment_group_id = int_buffer.read_u16(data);
             fragment_id = int_buffer.read_u8(data);
             fragment_size = int_buffer.read_u8(data);
-
-            if fragment_size == 0 {
-                bail!("empty fragment with size 0")
-            }
-
-            if fragment_id >= fragment_size {
-                bail!("fragment id cannot be larger than the fragment size")
-            }
         }
 
         Ok(Header {

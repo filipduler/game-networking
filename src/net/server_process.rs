@@ -140,12 +140,16 @@ impl ServerProcess {
         if let Some(client) = self.connection_manager.get_client_mut(&addr) {
             match client.channel.read(buffer, received_at) {
                 Ok(ReadPayload::Single(buffer)) => {
-                    self.out_events
-                        .send(InternalServerEvent::Receive(client.identity.id, buffer))?;
+                    self.out_events.send(InternalServerEvent::Receive(
+                        client.identity.connection_id,
+                        buffer,
+                    ))?;
                 }
                 Ok(ReadPayload::Parts(parts)) => {
-                    self.out_events
-                        .send(InternalServerEvent::ReceiveParts(client.identity.id, parts))?;
+                    self.out_events.send(InternalServerEvent::ReceiveParts(
+                        client.identity.connection_id,
+                        parts,
+                    ))?;
                 }
                 Err(e) => {
                     error!("failed channel read: {e}");

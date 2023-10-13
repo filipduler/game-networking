@@ -9,16 +9,16 @@ use std::{
 use anyhow::bail;
 use crossbeam_channel::Sender;
 
+use crate::net::{
+    bytes_with_header, int_buffer::IntBuffer, send_buffer::SendPayload, socket::UdpSendEvent,
+    Bytes, PacketType,
+};
+
 pub enum ConnectionStatus {
     Rejected,
     Connecting,
     Connected(u32),
 }
-
-use crate::net::{
-    bytes, bytes_with_header, int_buffer::IntBuffer, send_buffer::SendPayload,
-    socket::UdpSendEvent, Bytes, PacketType, MAGIC_NUMBER_HEADER,
-};
 
 use super::{identity::Identity, Connection};
 
@@ -74,10 +74,10 @@ impl ConnectionManager {
             if state == PacketType::ChallengeResponse
                 && identity.session_key == int_buffer.read_u64(&buffer)
             {
-                let client_id = identity.id;
+                let connection_id = identity.connection_id;
                 if let Some(buffer) = self.finish_challenge(addr) {
                     send_queue.push_back(UdpSendEvent::Server(buffer, *addr));
-                    return Ok(ConnectionStatus::Connected(client_id));
+                    return Ok(ConnectionStatus::Connected(connection_id));
                 }
             }
         } else {
@@ -109,7 +109,7 @@ impl ConnectionManager {
                 let mut int_buffer = IntBuffer::new_at(4);
 
                 int_buffer.write_u8(PacketType::ConnectionAccepted as u8, &mut buffer);
-                int_buffer.write_u32(identity.id, &mut buffer);
+                int_buffer.write_u32(identity.connection_id, &mut buffer);
 
                 //insert the client
                 self.insert_connection(connection_index, &identity);
@@ -141,7 +141,7 @@ impl ConnectionManager {
             let slot = &self.connections[index];
             if let Some(connection) = slot {
                 self.active_clients -= 1;
-                client_id = Some(connection.identity.id);
+                client_id = Some(connection.identity.connection_id);
             }
             self.addr_map.remove(&addr);
             self.connections[index] = None;

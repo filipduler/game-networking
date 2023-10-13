@@ -38,7 +38,7 @@ macro_rules! bytes {
 macro_rules! bytes_with_header {
     ($payload_size:expr) => {{
         let mut buffer = vec![0_u8; $payload_size + 4];
-        buffer[..4].copy_from_slice(&MAGIC_NUMBER_HEADER);
+        buffer[..4].copy_from_slice(&crate::net::MAGIC_NUMBER_HEADER);
         buffer
     }};
 }

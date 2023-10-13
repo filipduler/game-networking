@@ -16,7 +16,7 @@ use rand::Rng;
 
 use super::{
     channel::{Channel, ChannelType, ReadPayload},
-    connections,
+    connections::{self, ConnectionHandshake},
     header::SendType,
     int_buffer::IntBuffer,
     packets::SendEvent,
@@ -50,12 +50,18 @@ impl ClientProcess {
     ) -> anyhow::Result<Self> {
         let mut socket = Socket::connect(local_addr, remote_addr)?;
 
-        let (session_key, client_id) = connections::try_login(&mut socket).expect("login failed");
+        let connection_response = ConnectionHandshake::new(&mut socket).try_login()?;
 
-        out_events.send(InternalClientEvent::Connect(client_id))?;
+        out_events.send(InternalClientEvent::Connect(
+            connection_response.connection_id,
+        ))?;
 
         Ok(Self {
-            channel: Channel::new(local_addr, session_key, ChannelType::Client),
+            channel: Channel::new(
+                local_addr,
+                connection_response.session_key,
+                ChannelType::Client,
+            ),
             socket,
             send_queue: VecDeque::new(),
             in_sends,

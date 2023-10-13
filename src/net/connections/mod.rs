@@ -5,5 +5,5 @@ mod manager;
 
 pub use connection::Connection;
 pub use identity::Identity;
-pub use login::try_login;
+pub use login::ConnectionHandshake;
 pub use manager::{ConnectionManager, ConnectionStatus};
