@@ -45,6 +45,8 @@ mod tests {
         env::set_var("RUST_LOG", "INFO");
         env_logger::init();
 
+        let message_count = 20;
+        let read_timeout = Duration::from_secs(20);
         //start up the server
         let server_addr = "127.0.0.1:9090".parse().unwrap();
         let mut server = Server::start(server_addr, 64).unwrap();
@@ -61,22 +63,23 @@ mod tests {
             assert!(client.is_ok());
             let client = client.unwrap();
 
-            if let Ok(ServerEvent::NewConnection(connection_id)) =
-                server.read(&mut read_buf, Duration::from_secs(2))
-            {
+            let read_result = server.read(&mut read_buf, read_timeout);
+            assert!(read_result.is_ok());
+
+            if let Ok(Some(ServerEvent::NewConnection(connection_id))) = read_result {
                 assert_eq!(connection_id, client_index + 1);
             } else {
-                panic!("expected new connection");
+                panic!("expected new connection, got: {:?}", read_result.unwrap());
             }
 
             //start sending reliable messages
-            let mut data_list = Vec::with_capacity(10);
-            for i in 0..10 {
+            let mut data_list = Vec::with_capacity(message_count);
+            for i in 0..message_count {
                 let length = rand::thread_rng().gen_range(if i % 2 == 0 {
-                    10..MAX_FRAGMENT_SIZE
+                    10..FRAGMENT_SIZE
                     //500..501
                 } else {
-                    FRAGMENT_SIZE..MAX_FRAGMENT_SIZE
+                    FRAGMENT_SIZE + 1..MAX_FRAGMENT_SIZE
                     //1200..1201
                 });
                 let data = generate_random_u8_vector(length);
@@ -87,13 +90,13 @@ mod tests {
             }
 
             //receive the data
-            for i in 0..10 {
-                let ev = server.read(&mut read_buf, Duration::from_secs(2));
-                if let Ok(ServerEvent::Receive(connection_id, data)) = ev {
+            for i in 0..message_count {
+                let ev = server.read(&mut read_buf, read_timeout);
+                if let Ok(Some(ServerEvent::Receive(connection_id, data))) = ev {
                     assert_eq!(connection_id, client_index + 1);
                     assert!(data_list.iter().any(|f| f == data))
                 } else {
-                    panic!("unexpected server read {:?}", ev);
+                    panic!("unexpected server read reading event ({i}) {:?}", ev);
                 }
             }
 

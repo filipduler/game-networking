@@ -1,7 +1,7 @@
 use std::{io, net::SocketAddr, sync::Arc, thread, time::Duration};
 
 use anyhow::bail;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use log::error;
 
 use super::{
@@ -62,14 +62,14 @@ impl Server {
         &self,
         dest: &'a mut [u8],
         timeout: Duration,
-    ) -> anyhow::Result<ServerEvent<'a>> {
+    ) -> anyhow::Result<Option<ServerEvent<'a>>> {
         match self.out_events.recv_timeout(timeout) {
             Ok(InternalServerEvent::Receive(client_id, buffer)) => {
                 if dest.len() < buffer.len() {
                     bail!("destination size is not big enough.")
                 }
                 dest[..buffer.len()].copy_from_slice(&buffer);
-                Ok(ServerEvent::Receive(client_id, &dest[..buffer.len()]))
+                Ok(Some(ServerEvent::Receive(client_id, &dest[..buffer.len()])))
             }
             Ok(InternalServerEvent::ReceiveParts(client_id, parts)) => {
                 let mut bytes_offset = 0;
@@ -84,16 +84,16 @@ impl Server {
                     }
                 }
 
-                Ok(ServerEvent::Receive(client_id, &dest[..bytes_offset]))
+                Ok(Some(ServerEvent::Receive(client_id, &dest[..bytes_offset])))
             }
             Ok(InternalServerEvent::NewConnection(client_id)) => {
-                Ok(ServerEvent::NewConnection(client_id))
+                Ok(Some(ServerEvent::NewConnection(client_id)))
             }
             Ok(InternalServerEvent::ConnectionLost(client_id)) => {
-                Ok(ServerEvent::ConnectionLost(client_id))
+                Ok(Some(ServerEvent::ConnectionLost(client_id)))
             }
-            Err(e) => panic!("error receiving {e}"),
-            _ => panic!("unexpected event"),
+            Err(RecvTimeoutError::Timeout) => Ok(None),
+            _ => bail!("channel to thread lost"),
         }
     }
 }

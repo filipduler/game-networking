@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, rc::Rc, sync::Arc, time::Instant};
 
 use crossbeam_channel::Sender;
+use log::error;
 
 use crate::net::{
     channel::{Channel, ChannelType},
@@ -33,6 +34,8 @@ impl Connection {
         marked_packets: &mut Vec<Rc<SendPayload>>,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) {
-        self.channel.update(marked_packets, send_queue);
+        if let Err(e) = self.channel.update(marked_packets, send_queue) {
+            error!("error updating channel: {e}");
+        }
     }
 }

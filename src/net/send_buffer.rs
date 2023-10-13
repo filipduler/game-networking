@@ -19,15 +19,9 @@ pub struct SendBuffer {
 }
 
 pub struct SendPayload {
-    pub seq: u16,
-    //stores just the data without the header
     pub buffer: Bytes,
-    pub frag: bool,
 
-    //optional fragment part
-    pub fragment_group_id: u16,
-    pub fragment_id: u8,
-    pub fragment_size: u8,
+    pub original_header: Header,
 }
 
 pub struct ReceivedAck {
@@ -59,12 +53,8 @@ impl SendBufferManager {
     pub fn push_send_buffer(&mut self, seq: u16, data: &[u8], header: &Header) -> Rc<SendPayload> {
         let send_buffer = SendBuffer {
             payload: Rc::new(SendPayload {
-                seq,
                 buffer: data.to_vec(),
-                frag: header.packet_type.is_frag_variant(),
-                fragment_group_id: header.fragment_group_id,
-                fragment_id: header.fragment_id,
-                fragment_size: header.fragment_size,
+                original_header: *header,
             }),
             sent_at: None,
         };
@@ -221,8 +211,8 @@ mod tests {
 
         send_buffer.get_redelivery_packet(6, &mut packets);
         assert_eq!(packets.len(), 2);
-        assert_eq!(packets[0].seq, 1);
-        assert_eq!(packets[1].seq, 0);
+        assert_eq!(packets[0].original_header.seq, 1);
+        assert_eq!(packets[1].original_header.seq, 0);
     }
 
     #[test]

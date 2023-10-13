@@ -42,6 +42,8 @@ impl<'a> ConnectionHandshake<'a> {
 
     pub fn try_login(&mut self) -> anyhow::Result<ConnectionResponse> {
         for _ in 0..RETRIES {
+            self.server_salt = None;
+
             for _ in 0..RETRIES {
                 //send connection request
                 self.send_connection_request();

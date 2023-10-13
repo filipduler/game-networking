@@ -15,7 +15,7 @@ pub enum SendType {
     Unreliable,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Header {
     pub seq: u16,
     pub packet_type: PacketType,
@@ -70,8 +70,8 @@ impl Header {
         int_buffer.write_u32(self.ack_bits, data);
 
         if self.packet_type.is_frag_variant() {
-            if data.len() - int_buffer.index < FRAG_HEADER_SIZE {
-                bail!("data length needs to be at least bytes {HEADER_SIZE} long.");
+            if data.len() - int_buffer.index < 4 {
+                bail!("data length needs to be at least bytes {FRAG_HEADER_SIZE} long.");
             }
 
             int_buffer.write_u16(self.fragment_group_id, data);
@@ -101,7 +101,7 @@ impl Header {
         let mut fragment_size = 0;
 
         if packet_type.is_frag_variant() {
-            if data.len() < FRAG_HEADER_SIZE {
+            if data.len() - int_buffer.index < 4 {
                 bail!("data length needs to be at least bytes {FRAG_HEADER_SIZE} long.");
             }
 

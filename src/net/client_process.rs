@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::bail;
 use crossbeam_channel::{select, Receiver, Sender};
-use log::error;
+use log::{error, warn};
 use mio::{net::UdpSocket, Token};
 use rand::Rng;
 
@@ -89,11 +89,10 @@ impl ClientProcess {
                     match msg_result {
                         Ok(msg) => {
                             if let Err(e) = self.process_send_request(
-                            msg.0,
-                            msg.1,
-                        ) {
-                            error!("failed processing send request: {e}")
-                        }
+                                msg.0,
+                                msg.1) {
+                                warn!("failed processing send request: {e}")
+                            }
                     },
                         Err(e) => panic!("panic reading udp event {}", e),
                     };
@@ -167,7 +166,11 @@ impl ClientProcess {
     }
 
     fn update(&mut self) {
-        self.channel
-            .update(&mut self.marked_packets_buf, &mut self.send_queue);
+        if let Err(e) = self
+            .channel
+            .update(&mut self.marked_packets_buf, &mut self.send_queue)
+        {
+            error!("error updating channel: {e}");
+        }
     }
 }
