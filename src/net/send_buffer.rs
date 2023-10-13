@@ -9,7 +9,7 @@ use log::{debug, warn};
 
 use crate::net::{sequence::SequenceBuffer, BUFFER_SIZE};
 
-use super::{rtt_tracker::RttTracker, Bytes, BUFFER_WINDOW_SIZE};
+use super::{header::Header, rtt_tracker::RttTracker, Bytes, BUFFER_WINDOW_SIZE};
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -23,6 +23,11 @@ pub struct SendPayload {
     //stores just the data without the header
     pub buffer: Bytes,
     pub frag: bool,
+
+    //optional fragment part
+    pub fragment_group_id: u16,
+    pub fragment_id: u8,
+    pub fragment_size: u8,
 }
 
 pub struct ReceivedAck {
@@ -51,12 +56,15 @@ impl SendBufferManager {
         }
     }
 
-    pub fn push_send_buffer(&mut self, seq: u16, data: &[u8], frag: bool) -> Rc<SendPayload> {
+    pub fn push_send_buffer(&mut self, seq: u16, data: &[u8], header: &Header) -> Rc<SendPayload> {
         let send_buffer = SendBuffer {
             payload: Rc::new(SendPayload {
                 seq,
                 buffer: data.to_vec(),
-                frag,
+                frag: header.packet_type.is_frag_variant(),
+                fragment_group_id: header.fragment_group_id,
+                fragment_id: header.fragment_id,
+                fragment_size: header.fragment_size,
             }),
             sent_at: None,
         };
@@ -159,18 +167,19 @@ mod tests {
         let mut send_buffer = SendBufferManager::new();
         let mut packets = Vec::new();
         let d = &[0];
+        let temp_header = construct_temp_header();
 
-        send_buffer.push_send_buffer(0, d, false);
+        send_buffer.push_send_buffer(0, d, &temp_header);
         send_buffer.mark_sent(0, Instant::now());
-        send_buffer.push_send_buffer(1, d, false);
+        send_buffer.push_send_buffer(1, d, &temp_header);
         send_buffer.mark_sent(1, Instant::now());
         thread::sleep(SEND_TIMEOUT);
 
-        send_buffer.push_send_buffer(2, d, false);
+        send_buffer.push_send_buffer(2, d, &temp_header);
         send_buffer.mark_sent(2, Instant::now() - MAX_RTT);
-        send_buffer.push_send_buffer(3, d, false);
+        send_buffer.push_send_buffer(3, d, &temp_header);
         send_buffer.mark_sent(3, Instant::now() - MAX_RTT);
-        send_buffer.push_send_buffer(4, d, false);
+        send_buffer.push_send_buffer(4, d, &temp_header);
         send_buffer.mark_sent(4, Instant::now() - MAX_RTT);
 
         //because the enough time for redelivery hasn't passed we expect 0 redelivery packets
@@ -184,12 +193,14 @@ mod tests {
         let mut packets = Vec::new();
         let d = &[0];
 
-        send_buffer.push_send_buffer(0, d, false);
-        send_buffer.push_send_buffer(1, d, false);
-        send_buffer.push_send_buffer(2, d, false);
-        send_buffer.push_send_buffer(3, d, false);
-        send_buffer.push_send_buffer(4, d, false);
-        send_buffer.push_send_buffer(5, d, false);
+        let temp_header = construct_temp_header();
+
+        send_buffer.push_send_buffer(0, d, &temp_header);
+        send_buffer.push_send_buffer(1, d, &temp_header);
+        send_buffer.push_send_buffer(2, d, &temp_header);
+        send_buffer.push_send_buffer(3, d, &temp_header);
+        send_buffer.push_send_buffer(4, d, &temp_header);
+        send_buffer.push_send_buffer(5, d, &temp_header);
         send_buffer.mark_sent(0, Instant::now());
         send_buffer.mark_sent(1, Instant::now());
         send_buffer.mark_sent(2, Instant::now());
@@ -226,10 +237,11 @@ mod tests {
 
         //prepare send buffers
         let d = &[0];
+        let temp_header = construct_temp_header();
 
         let mut seq = 5;
         for i in 0..33 {
-            send_buffer.push_send_buffer(seq, d, false);
+            send_buffer.push_send_buffer(seq, d, &temp_header);
 
             seq = seq.wrapping_sub(1);
         }
@@ -264,5 +276,18 @@ mod tests {
                 .unwrap()
                 .acked
         );
+    }
+
+    fn construct_temp_header() -> Header {
+        Header {
+            seq: 0,
+            packet_type: crate::net::PacketType::PayloadReliable,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: 0,
+            session_key: 0,
+            ack: 0,
+            ack_bits: 0,
+        }
     }
 }

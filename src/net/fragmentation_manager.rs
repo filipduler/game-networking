@@ -38,6 +38,10 @@ impl FragmentationManager {
     }
 
     pub fn split_fragments(&mut self, chunks: Vec<Bytes>) -> anyhow::Result<Fragments> {
+        if chunks.is_empty() {
+            bail!("cannot create a fragmented message with 0 chunks");
+        }
+
         if chunks.len() > u8::MAX as usize {
             bail!("cannot create a fragmented message from more than 255 chunks");
         }

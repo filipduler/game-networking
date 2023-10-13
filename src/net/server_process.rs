@@ -81,11 +81,15 @@ impl ServerProcess {
                     }
 
                     match msg_result {
-                        Ok(msg) => self.process_send_request(
+                        Ok(msg) => {
+                            if let Err(e) = self.process_send_request(
                             msg.0,
                             msg.1,
                             msg.2
-                        ),
+                        ) {
+                            error!("error processing send request: {e}")
+                        }
+                    },
                         Err(e) => panic!("panic reading udp event {}", e),
                     };
                 }
@@ -105,6 +109,7 @@ impl ServerProcess {
                         match udp_event {
                             UdpEvent::Read(addr, buffer, received_at) => {
                                 if let Err(ref e) = self.process_read_request(addr, buffer, &received_at) {
+                                    //TODO: uncomment
                                     error!("failed processing read request: {e}");
                                 };
                             }
@@ -170,13 +175,13 @@ impl ServerProcess {
         }
 
         //disconnect the client
-        if let Some(addr) = disconnect_client_addr {
+        /*if let Some(addr) = disconnect_client_addr {
             if let Some(client_id) = self.connection_manager.disconnect_connection(addr) {
                 self.out_events
                     .send(InternalServerEvent::ConnectionLost(client_id))?;
                 info!("Disconnected client {client_id}")
             }
-        }
+        }*/
 
         Ok(())
     }

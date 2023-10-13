@@ -254,6 +254,9 @@ impl Channel {
                 packet.frag,
             );
             self.write_header_ack_fields(&mut header);
+            header.fragment_group_id = packet.fragment_group_id;
+            header.fragment_id = packet.fragment_id;
+            header.fragment_size = packet.fragment_size;
 
             let mut int_buffer = IntBuffer::new_at(4);
             let mut buffer = bytes_with_header!(header.get_header_size() + packet.buffer.len());
@@ -326,13 +329,17 @@ impl Channel {
 
         self.write_header_ack_fields(&mut header);
 
+        if self.mode == ChannelType::Client {
+            info!("sent header {:?}", header);
+        }
+
         let mut int_buffer = IntBuffer::new_at(4);
         header.write(buffer, &mut int_buffer);
 
         let send_payload = self.send_buffer.push_send_buffer(
             self.local_seq,
             &buffer[4 + header.get_header_size()..], //pass the just the data
-            frag,
+            &header,
         );
 
         Sequence::increment(&mut self.local_seq);

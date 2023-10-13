@@ -31,7 +31,6 @@ pub fn construct_send_event(data: &[u8]) -> anyhow::Result<SendEvent> {
 
     if FragmentationManager::should_fragment(data_len) {
         let chunks = data.chunks(FRAGMENT_SIZE);
-        assert!(chunks.len() > 0, "chunk count has to be atleast 1");
 
         let chunk_count = chunks.len();
         let mut fragments = Vec::with_capacity(chunk_count);

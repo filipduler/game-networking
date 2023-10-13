@@ -45,7 +45,7 @@ macro_rules! bytes_with_header {
 pub(crate) use {bytes, bytes_with_header};
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, FromRepr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
 pub enum PacketType {
     ConnectionRequest = 1,
     Challenge = 2,

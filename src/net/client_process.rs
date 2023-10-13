@@ -80,12 +80,15 @@ impl ClientProcess {
                     if interval_rx.try_recv().is_ok() {
                         self.update();
                     }
-
                     match msg_result {
-                        Ok(msg) => self.process_send_request(
+                        Ok(msg) => {
+                            if let Err(e) = self.process_send_request(
                             msg.0,
-                            msg.1
-                        ),
+                            msg.1,
+                        ) {
+                            error!("failed processing send request: {e}")
+                        }
+                    },
                         Err(e) => panic!("panic reading udp event {}", e),
                     };
                 }

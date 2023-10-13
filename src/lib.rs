@@ -74,12 +74,16 @@ mod tests {
             for i in 0..10 {
                 let length = rand::thread_rng().gen_range(if i % 2 == 0 {
                     10..MAX_FRAGMENT_SIZE
+                    //500..501
                 } else {
                     FRAGMENT_SIZE..MAX_FRAGMENT_SIZE
+                    //1200..1201
                 });
                 let data = generate_random_u8_vector(length);
                 assert!(client.send(&data, SendType::Reliable).is_ok());
                 data_list.push(data);
+
+                thread::sleep(Duration::from_millis(50));
             }
 
             //receive the data
@@ -95,9 +99,9 @@ mod tests {
 
             //to keep the client connection alive
             clients.push(client);
-        }
 
-        thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_secs(2));
+        }
     }
 
     fn generate_random_u8_vector(length: usize) -> Bytes {
