@@ -11,10 +11,10 @@ use super::{
     server_process::{InternalServerEvent, ServerProcess},
 };
 
+#[derive(PartialEq, Eq, Debug)]
 pub enum ServerEvent<'a> {
     NewConnection(u32),
     ConnectionLost(u32),
-    Connect,
     Receive(u32, &'a [u8]),
 }
 
@@ -58,8 +58,12 @@ impl Server {
         Ok(())
     }
 
-    pub fn read<'a>(&self, dest: &'a mut [u8]) -> anyhow::Result<ServerEvent<'a>> {
-        match self.out_events.recv() {
+    pub fn read<'a>(
+        &self,
+        dest: &'a mut [u8],
+        timeout: Duration,
+    ) -> anyhow::Result<ServerEvent<'a>> {
+        match self.out_events.recv_timeout(timeout) {
             Ok(InternalServerEvent::Receive(client_id, buffer)) => {
                 if dest.len() < buffer.len() {
                     bail!("destination size is not big enough.")

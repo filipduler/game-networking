@@ -47,7 +47,7 @@ pub fn try_login(socket: &mut Socket) -> anyhow::Result<(u64, u32)> {
 fn send_connection_request(client_salt: u64, socket: &mut Socket) -> anyhow::Result<()> {
     let mut int_buffer = IntBuffer::new_at(4);
 
-    let mut buffer = bytes_with_header!(13);
+    let mut buffer = bytes_with_header!(9);
 
     int_buffer.write_u8(PacketType::ConnectionRequest as u8, &mut buffer);
     int_buffer.write_u64(client_salt, &mut buffer);
@@ -107,7 +107,7 @@ fn send_challenge_response(
 ) -> anyhow::Result<()> {
     let mut int_buffer = IntBuffer::new_at(4);
 
-    let mut buffer = bytes_with_header!(21);
+    let mut buffer = bytes_with_header!(9);
 
     int_buffer.write_u8(PacketType::ChallengeResponse as u8, &mut buffer);
     int_buffer.write_u64(client_salt ^ server_salt, &mut buffer);

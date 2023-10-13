@@ -36,7 +36,7 @@ impl Client {
         //wait for the start event
         let client_id = match send_rx.recv_timeout(Duration::from_secs(50)) {
             Ok(InternalClientEvent::Connect(client_id)) => client_id,
-            _ => panic!("failed waiting for start event"),
+            _ => panic!("failed waiting for connection event"),
         };
 
         Ok(Client {
@@ -53,8 +53,8 @@ impl Client {
         Ok(())
     }
 
-    pub fn read<'a>(&self, dest: &'a mut [u8]) -> anyhow::Result<&'a [u8]> {
-        match self.out_events.recv() {
+    pub fn read<'a>(&self, dest: &'a mut [u8], timeout: Duration) -> anyhow::Result<&'a [u8]> {
+        match self.out_events.recv_timeout(timeout) {
             Ok(InternalClientEvent::Receive(buffer)) => {
                 if dest.len() < buffer.len() {
                     bail!("destination size is not big enough.")

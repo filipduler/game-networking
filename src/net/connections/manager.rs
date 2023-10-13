@@ -70,7 +70,6 @@ impl ConnectionManager {
         };
 
         //check if theres already a connect in process
-        //if let Some(identity) = self.connect_requests.get_mut(addr) {
         if let Some(identity) = self.connect_requests.get(addr) {
             if state == PacketType::ChallengeResponse
                 && identity.session_key == int_buffer.read_u64(&buffer)

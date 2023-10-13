@@ -3,23 +3,27 @@ use std::time::Duration;
 use strum_macros::FromRepr;
 
 //mod array_pool;
-pub mod channel;
-pub mod client;
-pub mod client_process;
+mod channel;
+mod client;
+mod client_process;
 mod connections;
 mod fragmentation_manager;
-pub mod header;
+mod header;
 mod int_buffer;
 mod packets;
 mod rtt_tracker;
 mod send_buffer;
 mod sequence;
-pub mod server;
-pub mod server_process;
+mod server;
+mod server_process;
 mod socket;
 
-pub const MAGIC_NUMBER_HEADER: [u8; 4] = [1, 27, 25, 14];
+pub use client::Client;
+pub use fragmentation_manager::{FRAGMENT_SIZE, MAX_FRAGMENT_SIZE};
+pub use header::SendType;
+pub use server::{Server, ServerEvent};
 
+pub const MAGIC_NUMBER_HEADER: [u8; 4] = [1, 27, 25, 14];
 pub const BUFFER_SIZE: u16 = 1024;
 //always has to be less than BUFFER SIZE
 pub const BUFFER_WINDOW_SIZE: u16 = 256;

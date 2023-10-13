@@ -63,12 +63,12 @@ impl FragmentationManager {
     }
 
     pub fn insert_fragment(&mut self, header: &Header, buffer: Bytes) -> anyhow::Result<bool> {
-        if header.fragment_id >= header.fragment_size {
-            bail!("fragment id cannot be larger than the fragment size")
-        }
-
         if header.fragment_size == 0 {
             bail!("empty fragment with size 0")
+        }
+
+        if header.fragment_id >= header.fragment_size {
+            bail!("fragment id cannot be larger than the fragment size")
         }
 
         //insert the fragment buffer if it doesn't exist yet

@@ -1,5 +1,5 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
-use log::{info, warn};
+use log::{debug, info, warn};
 use mio::net::UdpSocket;
 use mio::{Events, Interest, Poll, Token};
 use std::borrow::BorrowMut;
@@ -133,7 +133,7 @@ impl Socket {
 
                                 match send_result {
                                     Ok(length) => {
-                                        info!("sent packet of size {length} on {}", self.addr);
+                                        debug!("sent packet of size {length} on {}", self.addr);
 
                                         match packet {
                                             UdpSendEvent::ServerTracking(_, addr, seq) => {
@@ -180,7 +180,7 @@ impl Socket {
                                     Ok((packet_size, source_address)) => {
                                         if packet_size >= 4 && self.buf[..4] == MAGIC_NUMBER_HEADER
                                         {
-                                            info!(
+                                            debug!(
                                                 "received packet of size {packet_size} on {}",
                                                 self.addr
                                             );
