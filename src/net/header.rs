@@ -90,8 +90,7 @@ impl Header {
         let mut int_buffer = IntBuffer::default();
 
         let seq = int_buffer.read_u16(data);
-        let packet_type = PacketType::from_repr(int_buffer.read_u8(data))
-            .ok_or(anyhow!("invalid packet type"))?;
+        let packet_type = PacketType::try_from(int_buffer.read_u8(data))?;
         let session_key = int_buffer.read_u64(data);
         let ack = int_buffer.read_u16(data);
         let ack_bits = int_buffer.read_u32(data);

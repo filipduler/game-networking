@@ -72,6 +72,13 @@ mod tests {
                 panic!("expected new connection, got: {:?}", read_result.unwrap());
             }
 
+            clients.push(client);
+        }
+
+        for i in 0..10 {
+            let client_index = rand::thread_rng().gen_range(0..clients.len());
+            let mut client = &mut clients[client_index];
+
             //start sending reliable messages
             let mut data_list = Vec::with_capacity(message_count);
             for i in 0..message_count {
@@ -93,7 +100,7 @@ mod tests {
             for i in 0..message_count {
                 let ev = server.read(&mut read_buf, read_timeout);
                 if let Ok(Some(ServerEvent::Receive(connection_id, data))) = ev {
-                    assert_eq!(connection_id, client_index + 1);
+                    assert_eq!(connection_id, client_index as u32 + 1);
                     assert!(data_list.iter().any(|f| f == data))
                 } else {
                     panic!("unexpected server read reading event ({i}) {:?}", ev);
@@ -101,10 +108,11 @@ mod tests {
             }
 
             //to keep the client connection alive
-            clients.push(client);
 
             thread::sleep(Duration::from_secs(2));
         }
+
+        //drop the clients and expect lost connections
     }
 
     fn generate_random_u8_vector(length: usize) -> Bytes {

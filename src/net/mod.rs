@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use strum_macros::FromRepr;
+use anyhow::bail;
 
 //mod array_pool;
 mod channel;
@@ -45,7 +45,7 @@ macro_rules! bytes_with_header {
 pub(crate) use {bytes, bytes_with_header};
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromRepr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketType {
     ConnectionRequest = 1,
     Challenge = 2,
@@ -60,5 +60,22 @@ pub enum PacketType {
 impl PacketType {
     pub fn is_frag_variant(&self) -> bool {
         *self == PacketType::PayloadReliableFrag || *self == PacketType::PayloadUnreliableFrag
+    }
+}
+impl TryFrom<u8> for PacketType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(PacketType::ConnectionRequest),
+            2 => Ok(PacketType::Challenge),
+            3 => Ok(PacketType::ChallengeResponse),
+            4 => Ok(PacketType::ConnectionAccepted),
+            5 => Ok(PacketType::PayloadReliableFrag),
+            6 => Ok(PacketType::PayloadReliable),
+            7 => Ok(PacketType::PayloadUnreliableFrag),
+            8 => Ok(PacketType::PayloadUnreliable),
+            _ => bail!("couldn't parse value '{value}' to packet type"),
+        }
     }
 }

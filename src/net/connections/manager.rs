@@ -63,11 +63,7 @@ impl ConnectionManager {
         }
 
         let mut int_buffer = IntBuffer::default();
-        let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
-            state
-        } else {
-            bail!("invalid connection state in header");
-        };
+        let state = PacketType::try_from(int_buffer.read_u8(&buffer))?;
 
         //check if theres already a connect in process
         if let Some(identity) = self.connect_requests.get(addr) {

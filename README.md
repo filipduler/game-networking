@@ -4,3 +4,6 @@ TODO:
  - set max outbound bandwidth
  - write header tests
  - write connection tests
+ - send_broadcast to all on channel 
+ - pinging and disconnecting clients
+ - transform the unbound channels to bound and start dropping packets when the channel is full

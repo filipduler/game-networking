@@ -99,11 +99,7 @@ impl<'a> ConnectionHandshake<'a> {
         let buffer: Vec<u8> = self.read_udp_event()?;
 
         let mut int_buffer = IntBuffer::default();
-        let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
-            state
-        } else {
-            bail!("invalid connection state in header");
-        };
+        let state = PacketType::try_from(int_buffer.read_u8(&buffer))?;
 
         if self.client_salt != int_buffer.read_u64(&buffer) {
             bail!("invalid client salt");
@@ -117,11 +113,7 @@ impl<'a> ConnectionHandshake<'a> {
         let buffer: Vec<u8> = self.read_udp_event()?;
 
         let mut int_buffer = IntBuffer::default();
-        let state = if let Some(state) = PacketType::from_repr(int_buffer.read_u8(&buffer)) {
-            state
-        } else {
-            bail!("invalid connection state in header");
-        };
+        let state = PacketType::try_from(int_buffer.read_u8(&buffer))?;
 
         if state == PacketType::ConnectionAccepted {
             return Ok(int_buffer.read_u32(&buffer));

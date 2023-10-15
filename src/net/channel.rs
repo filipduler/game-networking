@@ -13,7 +13,6 @@ use anyhow::bail;
 use bit_field::BitField;
 use crossbeam_channel::Sender;
 use log::{debug, info};
-use strum_macros::Display;
 
 use super::{
     bytes, bytes_with_header,
@@ -27,7 +26,7 @@ use super::{
     Bytes, PacketType, BUFFER_SIZE, BUFFER_WINDOW_SIZE, MAGIC_NUMBER_HEADER,
 };
 
-#[derive(PartialEq, Eq, Display)]
+#[derive(PartialEq, Eq)]
 pub enum ChannelType {
     Client,
     Server,
