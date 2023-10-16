@@ -32,12 +32,13 @@ pub enum InternalClientEvent {
 }
 
 pub struct ClientProcess {
+    disconnecting: bool,
     channel: Channel,
     socket: Socket,
     send_queue: VecDeque<UdpSendEvent>,
     //API channels
     out_events: Sender<InternalClientEvent>,
-    in_sends: Receiver<(SendEvent, SendType)>,
+    in_sends: Receiver<SendEvent>,
     marked_packets_buf: Vec<Rc<SendPayload>>,
 }
 
@@ -46,7 +47,7 @@ impl ClientProcess {
         local_addr: SocketAddr,
         remote_addr: SocketAddr,
         out_events: Sender<InternalClientEvent>,
-        in_sends: Receiver<(SendEvent, SendType)>,
+        in_sends: Receiver<SendEvent>,
     ) -> anyhow::Result<Self> {
         let mut socket = Socket::connect(local_addr, remote_addr)?;
 
@@ -57,6 +58,7 @@ impl ClientProcess {
         ))?;
 
         Ok(Self {
+            disconnecting: false,
             channel: Channel::new(
                 local_addr,
                 connection_response.session_key,
@@ -88,13 +90,11 @@ impl ClientProcess {
                     }
                     match msg_result {
                         Ok(msg) => {
-                            if let Err(e) = self.process_send_request(
-                                msg.0,
-                                msg.1) {
+                            if let Err(e) = self.process_send_request(msg) {
                                 warn!("failed processing send request: {e}")
                             }
                     },
-                        Err(e) => panic!("panic reading udp event {}", e),
+                        Err(e) => bail!("process ending {}", e),
                     };
                 }
                 //incoming read packets
@@ -118,6 +118,7 @@ impl ClientProcess {
                             }
                             UdpEvent::SentClient(seq, sent_at) => {
                                 self.channel.send_buffer.mark_sent(seq, sent_at);
+                                //TODO: check if the disconnect packets were sent
                             }
                             _ => {}
                         }
@@ -148,24 +149,21 @@ impl ClientProcess {
         Ok(())
     }
 
-    fn process_send_request(
-        &mut self,
-        send_event: SendEvent,
-        send_type: SendType,
-    ) -> anyhow::Result<()> {
-        match send_type {
-            SendType::Reliable => self
-                .channel
-                .send_reliable(send_event, &mut self.send_queue)?,
-            SendType::Unreliable => self
-                .channel
-                .send_unreliable(send_event, &mut self.send_queue)?,
+    fn process_send_request(&mut self, send_event: SendEvent) -> anyhow::Result<()> {
+        //clear all other outbound packets if the client is disconnecting
+        if let SendEvent::Disconnect = send_event {
+            self.socket.empty_send_events();
+            self.disconnecting = true;
         }
 
-        Ok(())
+        self.channel.send_event(send_event, &mut self.send_queue)
     }
 
     fn update(&mut self) {
+        if self.disconnecting {
+            return;
+        }
+
         if let Err(e) = self
             .channel
             .update(&mut self.marked_packets_buf, &mut self.send_queue)

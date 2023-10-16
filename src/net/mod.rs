@@ -55,6 +55,7 @@ pub enum PacketType {
     PayloadReliable = 6,
     PayloadUnreliableFrag = 7,
     PayloadUnreliable = 8,
+    Disconnect = 9,
 }
 
 impl PacketType {
@@ -75,6 +76,7 @@ impl TryFrom<u8> for PacketType {
             6 => Ok(PacketType::PayloadReliable),
             7 => Ok(PacketType::PayloadUnreliableFrag),
             8 => Ok(PacketType::PayloadUnreliable),
+            9 => Ok(PacketType::Disconnect),
             _ => bail!("couldn't parse value '{value}' to packet type"),
         }
     }

@@ -58,6 +58,19 @@ impl Header {
         }
     }
 
+    pub fn new_disconnect(seq: u16, session_key: u64) -> Self {
+        Self {
+            seq,
+            session_key,
+            packet_type: PacketType::Disconnect,
+            ack: 0,
+            ack_bits: 0,
+            fragment_group_id: 0,
+            fragment_id: 0,
+            fragment_size: 0,
+        }
+    }
+
     pub fn write(&self, data: &mut [u8], int_buffer: &mut IntBuffer) -> anyhow::Result<()> {
         if data.len() - int_buffer.index < HEADER_SIZE {
             bail!("data length needs to be at least bytes {HEADER_SIZE} long.");

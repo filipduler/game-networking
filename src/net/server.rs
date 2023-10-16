@@ -19,7 +19,7 @@ pub enum ServerEvent<'a> {
 }
 
 pub struct Server {
-    in_sends: Sender<(SocketAddr, SendEvent, SendType)>,
+    in_sends: Sender<(SocketAddr, SendEvent)>,
     out_events: Receiver<InternalServerEvent>,
 }
 
@@ -52,9 +52,9 @@ impl Server {
     }
 
     pub fn send(&self, addr: SocketAddr, data: &[u8], send_type: SendType) -> anyhow::Result<()> {
-        let send_event = packets::construct_send_event(data)?;
+        let send_event = packets::construct_send_event(data, send_type)?;
 
-        self.in_sends.send((addr, send_event, send_type))?;
+        self.in_sends.send((addr, send_event))?;
         Ok(())
     }
 

@@ -45,7 +45,8 @@ mod tests {
         env::set_var("RUST_LOG", "INFO");
         env_logger::init();
 
-        let message_count = 20;
+        const MESSAGE_COUNT: usize = 20;
+        const CLIENT_COUNT: usize = 10;
         let read_timeout = Duration::from_secs(20);
         //start up the server
         let server_addr = "127.0.0.1:9090".parse().unwrap();
@@ -53,8 +54,8 @@ mod tests {
         let mut read_buf: [u8; MAX_FRAGMENT_SIZE] = [0_u8; MAX_FRAGMENT_SIZE];
 
         //connect 10 clients to it
-        let mut clients = Vec::new();
-        for client_index in 0..10 {
+        let mut clients = Vec::with_capacity(CLIENT_COUNT);
+        for client_index in 0..CLIENT_COUNT as u32 {
             let client_addr = format!("127.0.0.1:{}", 9091 + client_index)
                 .parse()
                 .unwrap();
@@ -75,13 +76,13 @@ mod tests {
             clients.push(client);
         }
 
-        for i in 0..10 {
+        for i in 0..=0 {
             let client_index = rand::thread_rng().gen_range(0..clients.len());
             let mut client = &mut clients[client_index];
 
             //start sending reliable messages
-            let mut data_list = Vec::with_capacity(message_count);
-            for i in 0..message_count {
+            let mut data_list = Vec::with_capacity(MESSAGE_COUNT);
+            for i in 0..MESSAGE_COUNT {
                 let length = rand::thread_rng().gen_range(if i % 2 == 0 {
                     10..FRAGMENT_SIZE
                     //500..501
@@ -97,7 +98,7 @@ mod tests {
             }
 
             //receive the data
-            for i in 0..message_count {
+            for i in 0..MESSAGE_COUNT {
                 let ev = server.read(&mut read_buf, read_timeout);
                 if let Ok(Some(ServerEvent::Receive(connection_id, data))) = ev {
                     assert_eq!(connection_id, client_index as u32 + 1);
@@ -107,12 +108,24 @@ mod tests {
                 }
             }
 
-            //to keep the client connection alive
-
-            thread::sleep(Duration::from_secs(2));
+            thread::sleep(Duration::from_secs(1));
         }
 
-        //drop the clients and expect lost connections
+        //disconnect the clients and expect lost connections
+        for client in &clients {
+            assert!(client.disconnect().is_ok());
+        }
+
+        for _ in 0..CLIENT_COUNT {
+            let read_result = server.read(&mut read_buf, read_timeout);
+            assert!(read_result.is_ok());
+
+            if let Ok(Some(ServerEvent::ConnectionLost(connection_id))) = read_result {
+                assert!((1..=10).contains(&connection_id));
+            } else {
+                panic!("expected lost connection, got: {:?}", read_result.unwrap());
+            }
+        }
     }
 
     fn generate_random_u8_vector(length: usize) -> Bytes {

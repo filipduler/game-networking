@@ -68,6 +68,10 @@ impl Socket {
         Ok(socket)
     }
 
+    pub fn empty_send_events(&mut self) {
+        self.send_queue.clear();
+    }
+
     pub fn enqueue_send_event(&mut self, send_event: UdpSendEvent) {
         self.send_queue.push_front(send_event);
     }

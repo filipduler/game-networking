@@ -13,7 +13,7 @@ use super::{
 
 pub struct Client {
     client_id: u32,
-    in_sends: Sender<(SendEvent, SendType)>,
+    in_sends: Sender<SendEvent>,
     out_events: Receiver<InternalClientEvent>,
 }
 
@@ -47,9 +47,15 @@ impl Client {
     }
 
     pub fn send(&self, data: &[u8], send_type: SendType) -> anyhow::Result<()> {
-        let send_event = packets::construct_send_event(data)?;
+        let send_event = packets::construct_send_event(data, send_type)?;
 
-        self.in_sends.send((send_event, send_type))?;
+        self.in_sends.send(send_event)?;
+        Ok(())
+    }
+
+    //TODO: make disconnect blocking
+    pub fn disconnect(&self) -> anyhow::Result<()> {
+        self.in_sends.send(SendEvent::Disconnect)?;
         Ok(())
     }
 

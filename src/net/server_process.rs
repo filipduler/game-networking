@@ -37,7 +37,7 @@ pub struct ServerProcess {
     socket: Socket,
     //API channels
     out_events: Sender<InternalServerEvent>,
-    in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
+    in_sends: Receiver<(SocketAddr, SendEvent)>,
     //connections
     send_queue: VecDeque<UdpSendEvent>,
     connection_manager: ConnectionManager,
@@ -48,7 +48,7 @@ impl ServerProcess {
         addr: SocketAddr,
         max_clients: usize,
         out_events: Sender<InternalServerEvent>,
-        in_sends: Receiver<(SocketAddr, SendEvent, SendType)>,
+        in_sends: Receiver<(SocketAddr, SendEvent)>,
     ) -> anyhow::Result<Self> {
         let socket = Socket::bind(addr)?;
 
@@ -84,13 +84,12 @@ impl ServerProcess {
                         Ok(msg) => {
                             if let Err(e) = self.process_send_request(
                             msg.0,
-                            msg.1,
-                            msg.2
+                            msg.1
                         ) {
                             error!("error processing send request: {e}")
                         }
                     },
-                        Err(e) => panic!("panic reading udp event {}", e),
+                        Err(e) => bail!("process ending {}", e),
                     };
                 }
                 //incoming read packets
@@ -109,7 +108,6 @@ impl ServerProcess {
                         match udp_event {
                             UdpEvent::Read(addr, buffer, received_at) => {
                                 if let Err(ref e) = self.process_read_request(addr, buffer, &received_at) {
-                                    //TODO: uncomment
                                     error!("failed processing read request: {e}");
                                 };
                             }
@@ -150,6 +148,13 @@ impl ServerProcess {
                         client.identity.connection_id,
                         parts,
                     ))?;
+                }
+                Ok(ReadPayload::Disconnect) => {
+                    if let Some(client_id) = self.connection_manager.disconnect_connection(addr) {
+                        self.out_events
+                            .send(InternalServerEvent::ConnectionLost(client_id))?;
+                        info!("disconnected client {client_id}")
+                    }
                 }
                 Err(e) => {
                     error!("failed channel read: {e}");
@@ -194,17 +199,11 @@ impl ServerProcess {
         &mut self,
         addr: SocketAddr,
         send_event: SendEvent,
-        send_type: SendType,
     ) -> anyhow::Result<()> {
         if let Some(connection) = self.connection_manager.get_client_mut(&addr) {
-            match send_type {
-                SendType::Reliable => connection
-                    .channel
-                    .send_reliable(send_event, &mut self.send_queue)?,
-                SendType::Unreliable => connection
-                    .channel
-                    .send_unreliable(send_event, &mut self.send_queue)?,
-            }
+            return connection
+                .channel
+                .send_event(send_event, &mut self.send_queue);
         }
 
         Ok(())

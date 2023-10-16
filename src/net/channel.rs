@@ -35,6 +35,7 @@ pub enum ChannelType {
 pub enum ReadPayload {
     Single(Bytes),
     Parts(Vec<Bytes>),
+    Disconnect,
     None,
 }
 
@@ -72,55 +73,57 @@ impl Channel {
         }
     }
 
-    pub fn send_reliable(
+    pub fn send_event(
         &mut self,
         send_event: SendEvent,
         send_queue: &mut VecDeque<UdpSendEvent>,
     ) -> anyhow::Result<()> {
         match send_event {
-            SendEvent::Single(mut buffer) => {
-                let seq: u16 = self.create_send_buffer(&mut buffer, false, 0, 0, 0)?;
-                self.send_tracking(seq, buffer, send_queue);
-            }
-            SendEvent::Fragmented(fragments) => {
-                let fragments = self.reliable_fragmentation.split_fragments(fragments)?;
-                for mut chunk in fragments.chunks {
-                    let seq: u16 = self.create_send_buffer(
-                        &mut chunk.buffer,
-                        true,
-                        fragments.group_id,
-                        chunk.fragment_id,
-                        fragments.chunk_count,
-                    )?;
-                    self.send_tracking(seq, chunk.buffer, send_queue);
+            SendEvent::Single(mut buffer, reliable) => {
+                if reliable {
+                    let seq: u16 = self.create_send_buffer(&mut buffer, false, 0, 0, 0)?;
+                    self.send_tracking(seq, buffer, send_queue);
+                } else {
+                    self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
+                    self.send_non_tracking(buffer, send_queue);
                 }
             }
-        };
-
-        Ok(())
-    }
-
-    pub fn send_unreliable(
-        &mut self,
-        send_event: SendEvent,
-        send_queue: &mut VecDeque<UdpSendEvent>,
-    ) -> anyhow::Result<()> {
-        match send_event {
-            SendEvent::Single(mut buffer) => {
-                self.create_unreliable_packet(&mut buffer, false, 0, 0, 0);
-                self.send_non_tracking(buffer, send_queue);
-            }
-            SendEvent::Fragmented(mut fragments) => {
+            SendEvent::Fragmented(mut fragments, reliable) => {
                 let fragments = self.reliable_fragmentation.split_fragments(fragments)?;
                 for mut chunk in fragments.chunks {
-                    self.create_unreliable_packet(
-                        &mut chunk.buffer,
-                        true,
-                        fragments.group_id,
-                        chunk.fragment_id,
-                        fragments.chunk_count,
-                    );
-                    self.send_non_tracking(chunk.buffer, send_queue);
+                    if reliable {
+                        let seq: u16 = self.create_send_buffer(
+                            &mut chunk.buffer,
+                            true,
+                            fragments.group_id,
+                            chunk.fragment_id,
+                            fragments.chunk_count,
+                        )?;
+                        self.send_tracking(seq, chunk.buffer, send_queue);
+                    } else {
+                        self.create_unreliable_packet(
+                            &mut chunk.buffer,
+                            true,
+                            fragments.group_id,
+                            chunk.fragment_id,
+                            fragments.chunk_count,
+                        );
+                        self.send_non_tracking(chunk.buffer, send_queue);
+                    }
+                }
+            }
+            SendEvent::Disconnect => {
+                //send three disconnect packets
+                for _ in 0..3 {
+                    let mut header = Header::new_disconnect(self.unreliable_seq, self.session_key);
+                    let mut buffer = bytes_with_header!(HEADER_SIZE);
+
+                    let mut int_buffer = IntBuffer::new_at(4);
+                    header.write(&mut buffer, &mut int_buffer)?;
+
+                    Sequence::increment(&mut self.unreliable_seq);
+
+                    self.send_non_tracking(buffer, send_queue);
                 }
             }
         };
@@ -144,9 +147,6 @@ impl Channel {
 
     fn send_tracking(&mut self, seq: u16, buffer: Bytes, send_queue: &mut VecDeque<UdpSendEvent>) {
         let header = Header::read(&buffer[4..]).unwrap();
-        if header.packet_type.is_frag_variant() && header.fragment_size == 0 {
-            panic!("wtf");
-        }
 
         send_queue.push_front(match self.mode {
             ChannelType::Client => UdpSendEvent::ClientTracking(buffer, seq),
@@ -170,13 +170,18 @@ impl Channel {
     ) -> anyhow::Result<ReadPayload> {
         let header = Header::read(&buffer)?;
 
-        //remove the header data from the buffer
-        _ = buffer.drain(0..header.get_header_size());
-
         //validate session key
         if header.session_key != self.session_key {
             bail!("incorrect session key");
         }
+
+        //client requested a disconnect
+        if header.packet_type == PacketType::Disconnect {
+            return Ok(ReadPayload::Disconnect);
+        }
+
+        //remove the header data from the buffer
+        _ = buffer.drain(0..header.get_header_size());
 
         match header.packet_type {
             PacketType::PayloadReliable | PacketType::PayloadReliableFrag => {
