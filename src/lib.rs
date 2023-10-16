@@ -115,6 +115,7 @@ mod tests {
         for client in &clients {
             assert!(client.disconnect().is_ok());
         }
+        thread::sleep(Duration::from_secs(2));
 
         for _ in 0..CLIENT_COUNT {
             let read_result = server.read(&mut read_buf, read_timeout);

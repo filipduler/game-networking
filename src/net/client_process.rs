@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::bail;
 use crossbeam_channel::{select, Receiver, Sender};
-use log::{error, warn};
+use log::{error, info, warn};
 use mio::{net::UdpSocket, Token};
 use rand::Rng;
 
@@ -25,6 +25,12 @@ use super::{
     Bytes, PacketType, MAGIC_NUMBER_HEADER,
 };
 
+#[derive(PartialEq, Eq)]
+enum ClientState {
+    Connected,
+    Disconnecting,
+}
+
 pub enum InternalClientEvent {
     Connect(u32),
     Receive(Bytes),
@@ -32,7 +38,7 @@ pub enum InternalClientEvent {
 }
 
 pub struct ClientProcess {
-    disconnecting: bool,
+    state: ClientState,
     channel: Channel,
     socket: Socket,
     send_queue: VecDeque<UdpSendEvent>,
@@ -58,7 +64,7 @@ impl ClientProcess {
         ))?;
 
         Ok(Self {
-            disconnecting: false,
+            state: ClientState::Connected,
             channel: Channel::new(
                 local_addr,
                 connection_response.session_key,
@@ -109,6 +115,11 @@ impl ClientProcess {
                         &mut udp_events,
                     )?;
 
+                    //we just processed the disconnect packets and we can finish the loop
+                    if self.state == ClientState::Disconnecting {
+                        return Ok(());
+                    }
+
                     while let Some(udp_event) = udp_events.pop_back() {
                         match udp_event {
                             UdpEvent::Read(addr, buffer, received_at) => {
@@ -118,7 +129,6 @@ impl ClientProcess {
                             }
                             UdpEvent::SentClient(seq, sent_at) => {
                                 self.channel.send_buffer.mark_sent(seq, sent_at);
-                                //TODO: check if the disconnect packets were sent
                             }
                             _ => {}
                         }
@@ -153,14 +163,14 @@ impl ClientProcess {
         //clear all other outbound packets if the client is disconnecting
         if let SendEvent::Disconnect = send_event {
             self.socket.empty_send_events();
-            self.disconnecting = true;
+            self.state = ClientState::Disconnecting;
         }
 
         self.channel.send_event(send_event, &mut self.send_queue)
     }
 
     fn update(&mut self) {
-        if self.disconnecting {
+        if self.state != ClientState::Connected {
             return;
         }
 

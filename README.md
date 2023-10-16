@@ -6,3 +6,4 @@ TODO:
  - send_broadcast to all on channel 
  - pinging and disconnecting clients
  - transform the unbound channels to bound and start dropping packets when the channel is full
+ - make disconnect a blocking call on client
